@@ -92,6 +92,7 @@ module = [
     "src.renderer",
     "src.pipeline",
     "src.engines.kokoro",
+    "src.cli.*",
 ]
 warn_return_any = false
 disallow_untyped_calls = false

@@ -41,6 +41,11 @@ class Engine(Protocol):
         ...
 
 
+# Engines that ship with this distribution. The renderer imports each
+# engine module directly (see src/renderer.py); the registry exists for
+# CLI listings and for the long-plan abstraction refactor.
+SUPPORTED_ENGINES: list[str] = ["kokoro"]
+
 REGISTRY: dict[str, type[Engine]] = {}
 
 
@@ -63,9 +68,10 @@ def get_engine(name: str) -> Engine:
 
 
 def available_engines() -> list[str]:
-    """Return the sorted list of registered engine names."""
-    return sorted(REGISTRY)
+    """Return the sorted list of engines this distribution supports.
 
-
-# Trigger registration side-effects.
-from src.engines import kokoro  # noqa: E402, F401
+    OSS ships with Kokoro only. Operators who add their own engine to
+    this repo should append its name to ``SUPPORTED_ENGINES`` and
+    expose a ``get_<name>`` function in ``src/engines/<name>.py``.
+    """
+    return sorted(SUPPORTED_ENGINES)
