@@ -1,0 +1,39 @@
+{
+  "title": "Hello from agent-radio-oss",
+  "date": "sample",
+  "program": "haystack-news",
+  "summary": "A short canned script for testing the renderer without an OpenRouter key. Three Kokoro hosts demo the cast.",
+  "target_duration_minutes": 1,
+  "segments": [
+    {
+      "speaker": "host_a",
+      "text": "This is Haystack News on agent-radio-oss. I'm Michael, and I'm a Kokoro voice running on whatever hardware you've got — CPU, an AMD GPU, an Apple Silicon Mac, or an NVIDIA card.",
+      "topic": "demo",
+      "register": "baseline"
+    },
+    {
+      "speaker": "host_b",
+      "text": "I'm Bella. We're not a real news show right now — this is the canned demo script that ships with the repo so you can test your install without an OpenRouter key.",
+      "topic": "demo",
+      "register": "baseline"
+    },
+    {
+      "speaker": "host_c",
+      "text": "And I'm Adam. The three of us cover the same Haystack News format the production stack uses — the difference is we're all Kokoro, and the whole pipeline is Apache 2.0.",
+      "topic": "demo",
+      "register": "baseline"
+    },
+    {
+      "speaker": "host_a",
+      "text": "If you can hear all three of us, the renderer is working. From here, point it at a real curator config to start producing daily AI news episodes on your own hardware.",
+      "topic": "demo",
+      "register": "emphasis"
+    },
+    {
+      "speaker": "host_b",
+      "text": "That's it for the demo. Real Haystack News, on your hardware, in five minutes. Welcome to the station.",
+      "topic": "demo",
+      "register": "reflective"
+    }
+  ]
+}

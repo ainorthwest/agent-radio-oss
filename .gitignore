@@ -38,9 +38,14 @@ config/radio.yaml
 # Output artifacts
 output/
 
-# Station library (runtime data, not source)
+# Station library (runtime data, not source).
+# We ignore generated episode/track artifacts but keep the canned
+# `episodes/sample/` directory in-tree so contributors can test the
+# renderer without an OpenRouter key.
 library/radio.db
-library/programs/*/episodes/
+library/programs/*/episodes/*
+!library/programs/*/episodes/sample/
+!library/programs/*/episodes/sample/**
 library/programs/*/tracks/
 library/specials/
 library/external/

@@ -10,7 +10,10 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
-        args: ['--maxkb=1024']
+        # OSS ships pre-rendered show assets (intros/outros/stings) as
+        # committed WAVs. Raised from the production cap of 1024 to keep
+        # them in-tree until Day 4 wires Stable Audio Open to regenerate.
+        args: ['--maxkb=4096']
       - id: check-merge-conflict
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]

@@ -1,0 +1,43 @@
+name: kokoro-adam
+character_name: Adam
+engine: kokoro
+description: "Adam — third voice for triangulation on Kokoro ONNX. Named voice am_adam."
+kokoro:
+  voice_id: am_adam
+  speed: 1.00
+  lang: en-us
+registers:
+  baseline: {}
+  emphasis:
+    kokoro:
+      speed: 1.08
+    post:
+      presence_db: 1.5
+      comp_threshold_db: -16.0
+      comp_ratio: 3.0
+  reflective:
+    kokoro:
+      speed: 0.92
+    post:
+      warmth_db: 1.5
+      presence_db: -0.5
+      comp_threshold_db: -22.0
+      comp_ratio: 1.8
+  reactive:
+    kokoro:
+      speed: 1.12
+    post:
+      warmth_db: -0.5
+      presence_db: 2.0
+      comp_threshold_db: -16.0
+      comp_ratio: 3.0
+post:
+  hpf_hz: 80.0
+  warmth_db: 2.0
+  debox_db: -2.0
+  comp_threshold_db: -20.0
+  comp_ratio: 2.0
+  comp_attack_ms: 3.0
+  comp_release_ms: 100.0
+  deesser_db: -3.0
+  limiter_db: -1.0
