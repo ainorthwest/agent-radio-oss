@@ -1,0 +1,82 @@
+[project]
+name = "agent-radio-oss"
+version = "0.1.0-mvp.dev"
+description = "Open-source autonomous AI radio platform — hardware-agnostic, commercial-deployable"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "pyyaml>=6.0",
+    "openai>=1.0.0",
+    "setuptools>=82.0.0",
+    "typer>=0.15.0",
+]
+
+[project.scripts]
+radio = "src.cli:app"
+
+[project.optional-dependencies]
+# TTS — Kokoro ONNX (CPU / CUDA / ROCm / CoreML via onnxruntime providers)
+tts = [
+    "kokoro-onnx>=0.4.0",
+    "soundfile>=0.12.0",
+    "numpy>=1.24.0",
+    "pedalboard>=0.9.0",
+]
+# Distribution — Cloudflare R2 (S3-compatible)
+distribute = [
+    "boto3>=1.34.0",
+]
+# Quality evaluation — librosa + torchmetrics pillars
+# (whisper.cpp WER pillar wired in Day 3 via subprocess, no Python dep)
+quality = [
+    "librosa>=0.10.0",
+    "soundfile>=0.12.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.8.0",
+    "praat-parselmouth>=0.4.0",
+    "torchmetrics[audio]>=1.6.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+]
+
+# Day 3+ deps not yet wired:
+#   stt: whisper.cpp (system binary, built from source per platform; no pip dep)
+#   music: stable-audio-tools (PyTorch, added Day 4)
+
+[build-system]
+requires = ["setuptools>=82.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.uv]
+# kokoro-onnx requires numpy>=2.0.2; some downstream deps over-constrain.
+override-dependencies = [
+    "numpy>=2.0.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

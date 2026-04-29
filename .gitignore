@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+.uv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+._*
+
+# Environment (CRITICAL — never commit)
+.env
+.env.local
+.env.*.local
+
+# Instance config — secrets-free, but each operator customizes
+config/radio.yaml
+
+# Output artifacts
+output/
+
+# Station library (runtime data, not source)
+library/radio.db
+library/programs/*/episodes/
+library/programs/*/tracks/
+library/specials/
+library/external/
+library/spots/
+library/shared/
+
+# Logs
+*.log
+logs/
+
+# Claude
+.claude/
+
+# Model files (downloaded via setup scripts in v0.1.0+)
+models/
+
+# Whisper.cpp build artifacts (Day 3)
+whisper.cpp/
+
+# Episode history data (append-only JSONL, local)
+data/
+
+# Linter caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/

@@ -1,0 +1,24 @@
+# Lightcone Studios — Shared Pre-commit Configuration
+#
+# Copy to your repo root as .pre-commit-config.yaml, then run:
+#   pre-commit install
+#
+# See specs/development-workflow.md for rationale and repo-specific profiles.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
