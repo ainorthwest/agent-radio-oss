@@ -72,3 +72,6 @@ data/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+
+# Internal sprint working spec — not part of the public distribution
+oss-mvp-sprint.md

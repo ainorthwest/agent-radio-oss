@@ -2,7 +2,7 @@
 
 **Open-source autonomous AI radio platform.** Hardware-agnostic. Commercial-deployable. Apache 2.0.
 
-> **Status: WIP.** This repo is in active sprint (see [`oss-mvp-sprint.md`](./oss-mvp-sprint.md) for the 7-day plan to v0.1.0-mvp).
+> **Status: WIP.** This repo is in active sprint toward v0.1.0-mvp.
 >
 > Day 1 (current): repo scaffolding + curated source port from `ainorthwest/agent-radio`.
 >
@@ -16,16 +16,26 @@ The bifurcation is intentional:
 
 | Repo | Purpose | Engines | License story |
 |---|---|---|---|
-| [`agent-radio`](https://github.com/ainorthwest/agent-radio) | Lightcone production stack (AINW Radio) | Orpheus / Dia / CSM / Qwen3 / Chatterbox-MLX, MusicGen MLX | Mixed (CC-BY-NC weights present) |
-| [`agent-radio-oss`](https://github.com/ainorthwest/agent-radio-oss) | Open-source distribution | Kokoro ONNX (TTS), whisper.cpp (STT), Stable Audio Open (music) | Fully Apache 2.0 / MIT / Stability Community |
+| [`agent-radio`](https://github.com/ainorthwest/agent-radio) | Lightcone production stack (AINW Radio) | Kokoro, Chatterbox, Chatterbox-MLX, CSM-MLX, Dia-MLX, Orpheus 3B MLX, Qwen3-TTS (0.6B + 1.7B), MusicGen MLX | Mixed — MusicGen weights are CC-BY-NC, so the production stack is **not commercially deployable as-is** without swapping the music engine |
+| [`agent-radio-oss`](https://github.com/ainorthwest/agent-radio-oss) | Open-source distribution | Kokoro ONNX (TTS) | Apache 2.0 throughout v0.1.0-mvp; Stability Community License once Stable Audio Open lands (Day 4) |
 
-## Stack (locked for v0.1.0-mvp)
+## Stack
+
+**Shipped today (Day 1 of MVP sprint):**
 
 - **TTS:** Kokoro ONNX — 82M params, CPU / CUDA / ROCm / CoreML via ONNX Runtime providers
-- **STT:** whisper.cpp — most hardware-portable Whisper, MIT (Day 3)
-- **Music:** Stable Audio Open — text-to-music, commercial-permitted (Day 4)
-- **Pipeline:** `curate → render → mix → quality → distribute`, librosa + torchmetrics quality stack
-- **CLI:** `radio render`, `radio run pipeline`, `radio library`, `radio distribute`, `radio config`
+- **Quality:** librosa (spectral) + torchmetrics (DNSMOS / SRMR / PESQ / STOI). WER pillar stubbed pending Day 3.
+- **Pipeline:** `curate → render → mix → quality → distribute`
+- **CLI:** `radio config`, `radio distribute`, `radio library`, `radio render`, `radio run pipeline`, `radio soundbooth`, `radio stream`
+- **Streaming:** AzuraCast HTTP API client (Apache 2.0)
+- **Demo show:** Haystack News with three Kokoro hosts (am_michael, af_bella, am_adam). Note: same name as the production show but a different cast — the production version uses Orpheus voices.
+
+**Roadmap (sprint days 2–7):**
+
+- **STT:** whisper.cpp via subprocess (Day 3) — replaces the production stack's `mlx-whisper` dependency
+- **Music:** Stable Audio Open via stable-audio-tools (Day 4) — replaces MusicGen for commercial deployability
+- **Per-platform setup scripts** (Day 5): `setup-amd.sh`, `setup-cpu.sh`, `setup-mac.sh`, `setup-cuda.sh`
+- **Hardware bring-up + smoke tests + dogfood pass** (Days 2, 6, 7)
 
 ## Hardware (planned for v0.1.0-mvp)
 
@@ -44,4 +54,4 @@ Model weights are governed by their upstream licenses. Per-component license aud
 
 ## Contributing
 
-Sprint in progress; contributing guidelines arrive with v0.1.0-mvp release. The working spec lives in [`oss-mvp-sprint.md`](./oss-mvp-sprint.md).
+Sprint in progress; contributing guidelines arrive with v0.1.0-mvp release.

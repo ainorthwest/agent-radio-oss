@@ -92,7 +92,6 @@ module = [
     "src.renderer",
     "src.pipeline",
     "src.engines.kokoro",
-    "src.cli.*",
 ]
 warn_return_any = false
 disallow_untyped_calls = false
@@ -106,6 +105,14 @@ disable_error_code = [
     "return-value",
     "call-arg",
 ]
+
+# CLI modules — Typer-decorated commands. No numpy/torch surface here,
+# so the strict suppressions above don't apply. Only keep the minimal
+# leniency Typer's Optional/Annotated usage requires.
+[[tool.mypy.overrides]]
+module = ["src.cli.*"]
+disallow_untyped_defs = false
+disable_error_code = ["type-arg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

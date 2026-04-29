@@ -5,18 +5,23 @@ Three-pillar evaluation:
   Pillar 2 — Perceived quality via torchmetrics[audio] (DNSMOS, SRMR, PESQ, STOI)
   Pillar 3 — Intelligibility via mlx-whisper + jiwer (WER/CER round-trip)
 
+OSS scope: Pillars 1 and 2 ship in v0.1.0-mvp. Pillar 3 is stubbed —
+``_compute_intelligibility`` gracefully returns sentinel ``-1.0`` values
+when ``mlx_whisper`` isn't installed (it isn't in the OSS extras). The
+real OSS WER pillar lands on Day 3 of the MVP sprint, wired through
+whisper.cpp via subprocess. Until then, ``wer`` and ``cer`` fields in
+quality reports stay at ``-1.0``.
+
 DNSMOS and SRMR are reference-free (no clean target needed). PESQ and STOI
-require reference audio and are only computed when available. WER/CER require
-the original script text for comparison.
+require reference audio and are only computed when available.
 
 Requires: uv sync --extra quality
-Optional: uv sync --extra asr  (for Pillar 3 intelligibility)
 
 Standalone:
     uv run python -m src.quality output/episode.mp3
-    uv run python -m src.quality output/audition.wav --engine csm
+    uv run python -m src.quality output/audition.wav --engine kokoro
     uv run python -m src.quality --manifest manifest.json --script script.json
-    uv run python -m src.quality --build-reference samples/*.wav --engine csm
+    uv run python -m src.quality --build-reference samples/*.wav --engine kokoro
     uv run python -m src.quality --build-reference samples/*.wav -o config/quality-reference.json
 """
 
@@ -29,8 +34,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Known TTS engines for reference profile resolution
-KNOWN_ENGINES = frozenset({"csm", "dia", "chatterbox", "chatterbox-mlx", "kokoro", "orpheus"})
+# Known TTS engines for reference profile resolution.
+# OSS distribution ships only Kokoro; the broader engine set lives in
+# the proprietary agent-radio repo.
+KNOWN_ENGINES = frozenset({"kokoro"})
 
 # Default directory for engine-specific reference profiles
 REFERENCE_DIR = Path("config")

@@ -29,8 +29,9 @@ def output(state: State, data: Any, human_fmt: str | None = None) -> None:
         ``str(data)`` is used.
     """
     if state.json_output:
+        blob: Any
         if dataclasses.is_dataclass(data) and not isinstance(data, type):
-            blob = dataclasses.asdict(data)  # type: ignore[arg-type]
+            blob = dataclasses.asdict(data)
         elif isinstance(data, (dict, list)):
             blob = data
         else:

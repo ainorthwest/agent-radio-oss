@@ -1,12 +1,22 @@
-"""Engine registry for agent-radio-oss.
+"""Engine surface for agent-radio-oss.
 
-A deliberately minimal Protocol + registry. The goal is to keep Kokoro
-pluggable without pre-deciding the long-plan engine abstraction (Phase 2).
+The renderer imports each supported engine module directly (e.g.
+``from src.engines.kokoro import get_kokoro``). This module exposes:
 
-Adding a new engine: subclass Engine, register it in
-``src/engines/__init__.py`` (or import it from your module so the
-registration side-effect runs), and the renderer will dispatch to it
-when a voice profile sets ``engine: <your_name>``.
+- ``Engine`` — a Protocol describing the shape an engine must satisfy
+  for the long-plan abstraction refactor (Phase 2). Nothing currently
+  uses this Protocol at runtime; it is documentation that future
+  contributors can typecheck against.
+- ``SUPPORTED_ENGINES`` / ``available_engines()`` — the list of engine
+  names this distribution supports. The CLI's ``radio config engines``
+  and ``radio soundbooth engines`` commands read from here.
+
+Adding a new engine: implement a module under ``src/engines/<name>.py``
+that exposes a ``get_<name>()`` lazy loader, add ``"<name>"`` to
+``SUPPORTED_ENGINES`` below, and wire dispatch in ``src/renderer.py``.
+The Protocol below is the contract — at minimum your engine needs a
+name, a sample rate, and a ``render(text, voice_profile, register)``
+method returning a mono float32 numpy array.
 """
 
 from __future__ import annotations
@@ -18,7 +28,12 @@ if TYPE_CHECKING:
 
 
 class Engine(Protocol):
-    """A TTS engine that the renderer can dispatch to."""
+    """A TTS engine that the renderer can dispatch to.
+
+    Not yet enforced at runtime — see the module docstring. The Engine
+    Protocol exists so the long-plan engine abstraction has a target
+    shape it can converge on without rewriting the renderer.
+    """
 
     name: str
     sample_rate: int
@@ -41,37 +56,11 @@ class Engine(Protocol):
         ...
 
 
-# Engines that ship with this distribution. The renderer imports each
-# engine module directly (see src/renderer.py); the registry exists for
-# CLI listings and for the long-plan abstraction refactor.
+# Engines this distribution supports. The renderer imports each engine
+# module directly; this list is what the CLI surfaces to operators.
 SUPPORTED_ENGINES: list[str] = ["kokoro"]
-
-REGISTRY: dict[str, type[Engine]] = {}
-
-
-def register(engine_cls: type[Engine]) -> type[Engine]:
-    """Decorator to register an Engine subclass under its ``name`` attribute."""
-    REGISTRY[engine_cls.name] = engine_cls
-    return engine_cls
-
-
-def get_engine(name: str) -> Engine:
-    """Resolve an engine by name and return an instance.
-
-    Raises:
-        ValueError: if no engine is registered under ``name``.
-    """
-    if name not in REGISTRY:
-        available = ", ".join(sorted(REGISTRY)) or "<none>"
-        raise ValueError(f"Unknown engine {name!r}. Registered: {available}")
-    return REGISTRY[name]()
 
 
 def available_engines() -> list[str]:
-    """Return the sorted list of engines this distribution supports.
-
-    OSS ships with Kokoro only. Operators who add their own engine to
-    this repo should append its name to ``SUPPORTED_ENGINES`` and
-    expose a ``get_<name>`` function in ``src/engines/<name>.py``.
-    """
+    """Return the sorted list of engines this distribution supports."""
     return sorted(SUPPORTED_ENGINES)

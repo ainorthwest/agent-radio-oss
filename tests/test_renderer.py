@@ -147,20 +147,67 @@ class TestOutputPaths:
             assert episode_dir.is_dir()
             assert segments_dir.is_dir()
 
-    def test_audition_output_dir_structure(self):
-        """render_voice_audition() output path should be {name}-{engine}-{ts}/audition.wav."""
-        # We can't run the full audition (needs TTS engine), but we can
-        # verify the path construction logic by checking the pattern.
-        # The audition dir follows: output/auditions/{profile}-{engine}-{timestamp}/
-        profile_name = "alice"
-        engine = "csm"
-        timestamp = 1741788000
-        expected_dir_name = f"{profile_name}-{engine}-{timestamp}"
+    def test_kokoro_load_deferred_until_first_real_segment(self):
+        """get_kokoro() must NOT be called when every segment has empty text.
 
-        # Verify the pattern matches what the code constructs
-        audition_dir = Path("output/auditions") / expected_dir_name
-        assert audition_dir.name == "alice-csm-1741788000"
-        assert (audition_dir / "audition.wav").name == "audition.wav"
+        Regression test for the lazy-init in _render_segments_kokoro: empty
+        scripts (used by other tests in this class) must not trigger model
+        loading, which would fail without the Kokoro ONNX file present.
+        """
+        from unittest.mock import patch
+
+        from src.renderer import _render_segments_kokoro
+
+        config = MagicMock()
+        config.renderer.sample_rate = 24000
+        segments = [
+            {"speaker": "host_a", "text": "", "register": "baseline"},
+            {"speaker": "host_a", "text": "   ", "register": "baseline"},
+        ]
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("src.renderer.get_kokoro") as mock_get_kokoro,
+        ):
+            segments_dir = Path(tmpdir)
+            result = _render_segments_kokoro(config, segments, {}, segments_dir)
+            assert result == []
+            mock_get_kokoro.assert_not_called()
+
+    def test_kokoro_loaded_once_for_multiple_segments(self):
+        """get_kokoro() is called exactly once even with multiple real segments."""
+        from unittest.mock import patch
+
+        import numpy as np
+
+        from src.renderer import _render_segments_kokoro
+
+        config = MagicMock()
+        config.renderer.sample_rate = 24000
+
+        # Mock Kokoro: returns a 1-second sine wave for any input.
+        fake_kokoro = MagicMock()
+        fake_kokoro.create.return_value = (
+            np.zeros(24000, dtype=np.float32),
+            None,
+        )
+        segments = [
+            {"speaker": "host_a", "text": "first segment.", "register": "baseline"},
+            {"speaker": "host_a", "text": "second segment.", "register": "baseline"},
+        ]
+        voice_profiles = {"host_a": {"kokoro": {"voice_id": "am_michael"}}}
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("src.renderer.get_kokoro", return_value=(fake_kokoro, 24000)) as mock_get,
+            patch("src.renderer._resolve_voice", return_value="am_michael"),
+        ):
+            segments_dir = Path(tmpdir)
+            result = _render_segments_kokoro(config, segments, voice_profiles, segments_dir)
+
+        assert len(result) == 2
+        mock_get.assert_called_once()
+        assert fake_kokoro.create.call_count == 2
 
     def test_episode_manifest_in_bundle(self):
         """Manifest should be written to output/episodes/{date}/manifest.json."""

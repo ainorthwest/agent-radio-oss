@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import typer
 
@@ -18,7 +19,7 @@ from src.cli._output import err, output
 app = typer.Typer(name="library", help="Station library & catalog.")
 
 
-def _open_catalog(ctx: typer.Context):  # noqa: ANN202
+def _open_catalog(ctx: typer.Context) -> Any:
     """Open a Catalog connection using global config."""
     from pathlib import Path
 

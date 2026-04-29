@@ -82,6 +82,10 @@ def main(
 # ---------------------------------------------------------------------------
 # Register OSS-safe command groups.
 #
+# Kept from the production CLI: config, distribute, library, render, run,
+# soundbooth, stream. Stream stays because a station without an AzuraCast
+# transmitter is just a podcast; AzuraCast is Apache 2.0.
+#
 # Dropped from the production CLI: edit, eval, music, viz, wire, write
 # (all newsroom / Steward / Bard / MLX-music / matplotlib viz dependent).
 # ---------------------------------------------------------------------------

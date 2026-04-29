@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -22,7 +23,7 @@ from src.cli._output import err, output
 app = typer.Typer(name="stream", help="AzuraCast streaming — station control.")
 
 
-def _az_config(ctx: typer.Context):  # noqa: ANN202
+def _az_config(ctx: typer.Context) -> Any:
     """Build AzuraCastConfig from the global config."""
     from src.stream import AzuraCastConfig
 

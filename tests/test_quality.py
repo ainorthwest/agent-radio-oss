@@ -515,24 +515,17 @@ class TestEngineReference:
     """Tests for Phase 1D — engine-specific reference profiles."""
 
     def test_known_engines_set(self):
-        """KNOWN_ENGINES should contain the expected TTS engines."""
-        assert "csm" in KNOWN_ENGINES
-        assert "dia" in KNOWN_ENGINES
-        assert "chatterbox" in KNOWN_ENGINES
-        assert "chatterbox-mlx" in KNOWN_ENGINES
-        assert "kokoro" in KNOWN_ENGINES
+        """KNOWN_ENGINES contains every engine this distribution ships."""
+        # OSS ships Kokoro only. The proprietary repo's broader set
+        # (csm, dia, chatterbox, chatterbox-mlx, orpheus, qwen3) is
+        # intentionally absent.
+        assert KNOWN_ENGINES == frozenset({"kokoro"})
 
     def test_resolve_known_engine(self):
         """Known engine should resolve to config/quality-reference-{engine}.json."""
-        path = _resolve_engine_reference("csm")
+        path = _resolve_engine_reference("kokoro")
         assert path is not None
-        assert path == Path("config/quality-reference-csm.json")
-
-    def test_resolve_chatterbox_mlx(self):
-        """Hyphenated engine name should work correctly."""
-        path = _resolve_engine_reference("chatterbox-mlx")
-        assert path is not None
-        assert path == Path("config/quality-reference-chatterbox-mlx.json")
+        assert path == Path("config/quality-reference-kokoro.json")
 
     def test_resolve_unknown_engine_raises(self):
         """Unknown engine should raise ValueError."""
@@ -551,12 +544,12 @@ class TestEngineReference:
             "pitch_variance": {"mean": 1000.0, "std": 500.0},
             "lufs_approx": {"mean": -16.0, "std": 3.0},
             "mfcc_mean": {"values": [0.0] * 13, "std": 10.0},
-            "engine": "csm",
+            "engine": "kokoro",
             "sample_count": 5,
         }
-        ref_path = tmp_path / "quality-reference-csm.json"
+        ref_path = tmp_path / "quality-reference-kokoro.json"
         ref_path.write_text(json.dumps(ref_data))
-        report = evaluate(speech_like_audio, engine="csm")
+        report = evaluate(speech_like_audio, engine="kokoro")
         assert report.overall_score > 0
         assert "reference" in report.notes[0].lower()
 
@@ -572,7 +565,7 @@ class TestEngineReference:
         ref_path.write_text(json.dumps(explicit_ref))
 
         # Even with engine set, explicit reference_path should be used
-        report = evaluate(speech_like_audio, reference_path=ref_path, engine="csm")
+        report = evaluate(speech_like_audio, reference_path=ref_path, engine="kokoro")
         assert "reference" in report.notes[0].lower()
         # The extreme reference values should produce a low score (deviation)
         assert report.overall_score < 0.8
@@ -582,18 +575,18 @@ class TestEngineReference:
     ):
         """When engine reference file doesn't exist, should fall back to standalone."""
         monkeypatch.setattr("src.quality.REFERENCE_DIR", tmp_path)
-        report = evaluate(speech_like_audio, engine="dia")
+        report = evaluate(speech_like_audio, engine="kokoro")
         assert "standalone" in report.notes[0].lower() or "heuristics" in report.notes[0].lower()
 
     def test_build_reference_stores_engine_metadata(self, speech_like_audio: Path, tmp_path: Path):
         """build_reference() with engine param should store engine in metadata."""
         output_path = tmp_path / "ref.json"
-        build_reference([speech_like_audio], output_path, engine="csm")
+        build_reference([speech_like_audio], output_path, engine="kokoro")
 
         with output_path.open() as f:
             ref = json.load(f)
 
-        assert ref["engine"] == "csm"
+        assert ref["engine"] == "kokoro"
         assert ref["sample_count"] == 1
 
     def test_build_reference_no_engine_omits_key(self, speech_like_audio: Path, tmp_path: Path):
