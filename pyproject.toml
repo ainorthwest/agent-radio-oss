@@ -1,6 +1,6 @@
 [project]
 name = "agent-radio-oss"
-version = "0.1.0-mvp.dev"
+version = "0.1.0.dev0"
 description = "Open-source autonomous AI radio platform — hardware-agnostic, commercial-deployable"
 readme = "README.md"
 license = "Apache-2.0"
@@ -42,6 +42,7 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.3.0",
     "mypy>=1.8.0",
+    "types-PyYAML>=6.0.0",
 ]
 
 # Day 3+ deps not yet wired:
@@ -76,6 +77,14 @@ known-first-party = ["src"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+# Modules that wrap numpy/scipy/torch — Any leakage from third-party libs
+# is unavoidable without a heavy refactor. Loosen the strictest checks here
+# so the rest of the codebase keeps strict mode honest.
+[[tool.mypy.overrides]]
+module = ["src.dsp", "src.mixer", "src.library", "src.distributor", "src.stream"]
+warn_return_any = false
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
