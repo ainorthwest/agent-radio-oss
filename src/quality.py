@@ -3,14 +3,11 @@
 Three-pillar evaluation:
   Pillar 1 — Signal analysis via librosa (spectral features, prosody metrics)
   Pillar 2 — Perceived quality via torchmetrics[audio] (DNSMOS, SRMR, PESQ, STOI)
-  Pillar 3 — Intelligibility via mlx-whisper + jiwer (WER/CER round-trip)
+  Pillar 3 — Intelligibility via whisper.cpp (WER/CER round-trip)
 
-OSS scope: Pillars 1 and 2 ship in v0.1.0-mvp. Pillar 3 is stubbed —
-``_compute_intelligibility`` gracefully returns sentinel ``-1.0`` values
-when ``mlx_whisper`` isn't installed (it isn't in the OSS extras). The
-real OSS WER pillar lands on Day 3 of the MVP sprint, wired through
-whisper.cpp via subprocess. Until then, ``wer`` and ``cer`` fields in
-quality reports stay at ``-1.0``.
+Pillar 3 routes through :mod:`src.stt`, which shells out to the
+whisper.cpp binary. If the binary is unavailable, ``_compute_intelligibility``
+returns sentinel ``-1.0`` values so the rest of the report still renders.
 
 DNSMOS and SRMR are reference-free (no clean target needed). PESQ and STOI
 require reference audio and are only computed when available.
@@ -550,72 +547,47 @@ def _compute_perceived_quality(
 def _compute_intelligibility(audio_path: Path, script_text: str) -> dict[str, float]:
     """Pillar 3: Whisper round-trip intelligibility scoring.
 
-    Transcribes audio with mlx-whisper, then compares against the original
-    script text using jiwer to compute WER (Word Error Rate) and CER
-    (Character Error Rate).
+    Routes transcription through :mod:`src.stt` (whisper.cpp). The reference
+    script is normalized inside :func:`src.stt.wer` / :func:`src.stt.cer`
+    (lowercase, bracket tags + punctuation stripped), so callers can pass
+    the raw script text including ``[laugh]`` / ``(sighs)`` tags.
 
-    Requires: uv sync --extra asr (mlx-whisper + jiwer)
-
-    Returns dict with "wer" and "cer" keys. Values are -1.0 if ASR
-    dependencies are unavailable.
+    Returns dict with ``wer`` and ``cer`` keys. Values are ``-1.0`` if the
+    whisper binary is unavailable or transcription fails.
     """
+    from src import stt
+
     results: dict[str, float] = {"wer": -1.0, "cer": -1.0}
 
     if not script_text or not script_text.strip():
         return results
 
     try:
-        import mlx_whisper
-    except ImportError:
+        hypothesis = stt.transcribe(audio_path)
+    except stt.WhisperUnavailableError as e:
         print(
-            "[quality] mlx-whisper not installed — WER/CER disabled (intelligibility not scored). "
-            "Install with: uv sync --extra asr",
+            f"[quality] whisper.cpp binary not available — WER/CER disabled. {e}",
             file=sys.stderr,
         )
         return results
-
-    try:
-        import jiwer
-    except ImportError:
-        print("[quality] jiwer not installed — skipping intelligibility", file=sys.stderr)
+    except stt.WhisperError as e:
+        print(f"[quality] whisper.cpp transcription failed: {e}", file=sys.stderr)
+        return results
+    except Exception as e:  # noqa: BLE001 — defensive against subprocess weirdness
+        print(f"[quality] whisper.cpp unexpected error: {e}", file=sys.stderr)
         return results
 
-    # Transcribe with Whisper
-    try:
-        result = mlx_whisper.transcribe(
-            str(audio_path),
-            path_or_hf_repo="mlx-community/whisper-large-v3-turbo",
-            language="en",
-        )
-        hypothesis = result.get("text", "").strip()
-    except Exception as e:
-        print(f"[quality] Whisper transcription failed: {e}", file=sys.stderr)
-        return results
-
-    if not hypothesis:
+    if not hypothesis.strip():
         # Whisper returned empty — treat as total failure
         results["wer"] = 1.0
         results["cer"] = 1.0
         return results
 
-    # Strip non-speech tags from script text before comparison
-    # (e.g., [laugh], (sighs), etc. — these aren't spoken words)
-    import re
-
-    reference_text = re.sub(r"\[.*?\]|\(.*?\)", "", script_text).strip()
-    reference_text = re.sub(r"\s+", " ", reference_text)
-
-    if not reference_text:
-        return results
-
-    # Compute WER and CER using jiwer's default text normalization
     try:
-        wer_result = jiwer.wer(reference_text, hypothesis)
-        cer_result = jiwer.cer(reference_text, hypothesis)
-        results["wer"] = round(float(wer_result), 4)
-        results["cer"] = round(float(cer_result), 4)
-    except Exception as e:
-        print(f"[quality] jiwer scoring failed: {e}", file=sys.stderr)
+        results["wer"] = round(stt.wer(script_text, hypothesis), 4)
+        results["cer"] = round(stt.cer(script_text, hypothesis), 4)
+    except Exception as e:  # noqa: BLE001
+        print(f"[quality] WER/CER scoring failed: {e}", file=sys.stderr)
 
     return results
 
