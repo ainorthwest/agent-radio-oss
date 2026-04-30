@@ -5,6 +5,12 @@ Runtime providers. The provider is selected at load time via the
 ``KOKORO_PROVIDER`` env var; falls back to ``CPUExecutionProvider``
 if unset.
 
+Internally, ``KOKORO_PROVIDER`` is translated to ``ONNX_PROVIDER``
+(the env var ``kokoro-onnx`` 0.5.0+ actually reads) and also passed
+via the ``providers=`` constructor kwarg for ``kokoro-onnx`` 0.4.x.
+The actual provider used is read back from the ONNX Runtime session
+after init — what we log is ground truth, not what was requested.
+
 Voice IDs are named presets (e.g. ``am_michael``, ``af_bella``). Two
 voices can be blended via the ``blend:`` block in a voice profile.
 """
@@ -55,8 +61,9 @@ def get_kokoro() -> tuple[Any, int]:
     """Return (kokoro_model, sample_rate). Lazy-loads on first call.
 
     Honors ``KOKORO_PROVIDER`` env var to select the ONNX Runtime
-    execution provider. Logs the active provider on first load so
-    operators can confirm their hardware was picked up.
+    execution provider. Logs the *actual* provider after init so
+    operators can confirm their hardware was picked up — not what
+    was requested.
     """
     global _kokoro, _kokoro_sample_rate, _active_provider
     if _kokoro is None:
@@ -72,27 +79,73 @@ def get_kokoro() -> tuple[Any, int]:
             )
 
         provider = _resolve_provider()
-        # kokoro-onnx ≥0.4 accepts providers via the `providers` kwarg.
-        # Older versions silently ignore it and use CPU — we still try
-        # the kwarg and fall back gracefully.
+        # @gotcha[claude/2026-04-30]: kokoro-onnx 0.5.0+ silently ignores the
+        # `providers=` kwarg AND reads `ONNX_PROVIDER` (not `KOKORO_PROVIDER`)
+        # from env. We translate to `ONNX_PROVIDER` here and *also* pass
+        # `providers=` for 0.4.x backcompat, then read providers back from
+        # the session to verify what actually loaded. The env var is scoped
+        # to Kokoro init only — restored afterwards so future engines that
+        # also touch ONNX Runtime aren't surprised by a stale value.
+        prev_onnx_provider = os.environ.get("ONNX_PROVIDER")
+        os.environ["ONNX_PROVIDER"] = provider
         try:
-            _kokoro = KokoroOnnx(
-                str(KOKORO_ONNX),
-                str(KOKORO_VOICES),
-                providers=[provider],
-            )
-        except TypeError:
-            _kokoro = KokoroOnnx(str(KOKORO_ONNX), str(KOKORO_VOICES))
-            if provider != DEFAULT_PROVIDER:
-                print(
-                    "[kokoro] WARNING: this version of kokoro-onnx does not "
-                    "accept providers; using its default backend.",
-                    file=sys.stderr,
+            try:
+                _kokoro = KokoroOnnx(
+                    str(KOKORO_ONNX),
+                    str(KOKORO_VOICES),
+                    providers=[provider],
                 )
+            except TypeError:
+                _kokoro = KokoroOnnx(str(KOKORO_ONNX), str(KOKORO_VOICES))
+        finally:
+            if prev_onnx_provider is None:
+                os.environ.pop("ONNX_PROVIDER", None)
+            else:
+                os.environ["ONNX_PROVIDER"] = prev_onnx_provider
         _kokoro_sample_rate = 24000
-        _active_provider = provider
-        print(f"[kokoro] loaded with provider={provider}", file=sys.stderr)
+
+        actual = _read_session_providers(_kokoro)
+        if actual is None:
+            print(
+                "[kokoro] WARNING: could not read providers from ONNX Runtime "
+                "session; logging the requested provider only — actual provider "
+                "may differ.",
+                file=sys.stderr,
+            )
+        _active_provider = actual or provider
+        if actual and actual != provider:
+            print(
+                f"[kokoro] WARNING: requested provider={provider} but ONNX Runtime "
+                f"loaded {actual}. Verify your onnxruntime install supports the "
+                f"requested provider.",
+                file=sys.stderr,
+            )
+        print(f"[kokoro] loaded with provider={_active_provider}", file=sys.stderr)
     return _kokoro, _kokoro_sample_rate
+
+
+def _read_session_providers(kokoro_model: Any) -> str | None:
+    """Read the active provider from the underlying ONNX Runtime session.
+
+    kokoro-onnx exposes the session as ``.sess``; ONNX Runtime sessions
+    expose ``get_providers()`` which returns the prioritized list of
+    providers actually attached. The first entry is what real inference
+    will use. Returns None if we cannot introspect (defensive — never
+    block rendering on a log-line nicety).
+    """
+    sess = getattr(kokoro_model, "sess", None)
+    if sess is None:
+        return None
+    get_providers = getattr(sess, "get_providers", None)
+    if get_providers is None:
+        return None
+    try:
+        providers = get_providers()
+    except Exception:
+        return None
+    if not providers:
+        return None
+    return str(providers[0])
 
 
 def active_provider() -> str | None:
