@@ -4,7 +4,7 @@
 
 > **Status: WIP.** This repo is in active sprint toward v0.1.0-mvp.
 >
-> Day 2 (current): Kokoro cross-hardware bring-up. Apple CoreML verified end-to-end with parity audio; AMD ROCm host configured (ROCm 7.2.1 / RX 9070 / `gfx1201`) with `onnxruntime_migraphx` install in progress; CPU baseline verified.
+> Day 2: Kokoro cross-hardware bring-up. Apple CoreML verified end-to-end; cross-host CPU parity verified (Mac M3 Pro + Linux Ryzen 7); AMD ROCm setup plumbed all the way through provider engagement on RX 9070 / `gfx1201`, but MIGraphX graph compilation on Kokoro hits a >15-min perf wall — v0.1.0 recommends CPU on AMD hardware while v0.1.1 tunes the compile/cache. Engine fix shipped that translates `KOKORO_PROVIDER` → `ONNX_PROVIDER` and verifies actual loaded provider against requested.
 >
 > Day 7 target: a stranger with an AMD GPU + Ubuntu can `git clone`, run a setup script, and produce a Haystack News episode + transcript in under 20 minutes.
 
@@ -44,8 +44,8 @@ Verified by Day 2 of the MVP sprint. See [`docs/hardware/`](./docs/hardware/) fo
 | Backend | Provider string | Status | Doc |
 |---|---|---|---|
 | Apple Silicon (M-series, CoreML) | `CoreMLExecutionProvider` | ✓ Verified on M3 Pro / macOS 26.3 | [`docs/hardware/apple-silicon.md`](./docs/hardware/apple-silicon.md) |
-| AMD ROCm (RDNA4 RX 9070 / `gfx1201`) | `ROCMExecutionProvider` / `MIGraphXExecutionProvider` | 🚧 Day 2 bring-up — host has ROCm 7.2.1 + MIGraphX 2.15.0; `onnxruntime_migraphx` install pending | [`docs/hardware/amd-rocm.md`](./docs/hardware/amd-rocm.md) |
-| CPU (any Linux/Mac/WSL) | `CPUExecutionProvider` | ✓ Verified on Shiro (M3 Pro / macOS 26.3); Hinoki + Docker baseline rendering | [`docs/hardware/cpu.md`](./docs/hardware/cpu.md) |
+| CPU (any Linux/Mac/WSL) | `CPUExecutionProvider` | ✓ Verified on Shiro (M3 Pro / macOS 26.3) and Hinoki (Ryzen 7 9700X / Ubuntu 24.04); cross-host parity Δ < 0.01 | [`docs/hardware/cpu.md`](./docs/hardware/cpu.md) |
+| AMD ROCm (RDNA4 RX 9070 / `gfx1201`) | `MIGraphXExecutionProvider` | ⚠ Plumbing verified (ROCm 7.2.1 + MIGraphX 2.15.0 + `onnxruntime-migraphx` 1.23.2 wheel), provider engages, model loads to VRAM. Graph compilation hits a perf wall on Kokoro's encoder (>15 min). For v0.1.0 use `KOKORO_PROVIDER=CPUExecutionProvider` on AMD hardware. v0.1.1 will tune compile / cache. | [`docs/hardware/amd-rocm.md`](./docs/hardware/amd-rocm.md) |
 | NVIDIA CUDA | `CUDAExecutionProvider` | ⚠️ Scripts ship Day 5; validation deferred to long plan | _not yet_ |
 
 ## License

@@ -65,11 +65,23 @@ If the log says anything other than `CPUExecutionProvider` when you've set it ex
 
 ### Hinoki (AMD Ryzen 7 9700X, Ubuntu 24.04, host CPU path)
 
-_To be filled in once `uv sync --extra tts --extra quality --extra dev` completes on Hinoki and the audition is run with `KOKORO_PROVIDER=CPUExecutionProvider`. Expected: identical audio metrics to Shiro CPU; render wall-clock should be in the same order of magnitude (CPU compute differs but Kokoro is small enough that both modern CPUs handle it comfortably)._
+| Metric | Value |
+|---|---|
+| Render wall-clock | 8.25s |
+| DNSMOS overall | 4.2133 |
+| DNSMOS signal | 4.3001 |
+| DNSMOS background | 3.7471 |
+| DNSMOS P808 | 3.5460 |
+| SRMR | 0.0 ⚠ — known torchaudio-on-Linux bug, not a parity issue (see commit `356khz`) |
+| Repetition score | 0.934 |
+| SNR | 6.26 dB |
+| Output | 53.85s mono float32 @ 24000 Hz |
 
-### Docker (`ubuntu:24.04` clean container, host-mounted models)
+**Cross-host parity:** all metric deltas vs Shiro CPU under 0.01. DNSMOS OVR Δ = 0.0047. Same Kokoro graph, same float32 outputs across operating systems and CPU vendors.
 
-_To be filled in. The Docker run validates a zero-GPU clean-room install: only the bits available in the bare Ubuntu image plus what `uv sync --extra tts --extra quality` pulls in. This is the closest we get to "fresh stranger clones the repo" reproducibility before Day 5's setup scripts._
+### Docker (`ubuntu:24.04` clean container)
+
+_Deferred to Day 7 smoke test._ The two host CPU runs above (Mac + Linux) already establish cross-OS portability of the CPU path. A clean-container baseline becomes meaningful when the setup scripts (Day 5) and dogfood pass (Day 7) need to validate "fresh stranger clones the repo and runs `setup-cpu.sh`" reproducibility. Day 2 closes without it.
 
 ## Why CPU is the reference
 

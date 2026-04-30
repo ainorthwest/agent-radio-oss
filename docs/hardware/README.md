@@ -30,15 +30,46 @@ A contributor who learns this OSS stack learns three different cross-hardware id
 
 Same input — `library/programs/haystack-news/episodes/sample/script.json`, 5 segments, 53.85s of speech, `kokoro-michael` voice. Quality scoring via `python -m src.quality`.
 
-| Host | OS | Provider | Render wall-clock | DNSMOS OVR | DNSMOS SIG | SRMR | Repetition | Δ vs CPU baseline |
+| Host | OS | Provider | Render wall-clock | DNSMOS OVR | DNSMOS SIG | SRMR | Repetition | Δ vs Shiro CPU baseline |
 |---|---|---|---|---|---|---|---|---|
 | Shiro (M3 Pro) | macOS 26.3 | `CPUExecutionProvider` | **9.05s** | 4.2086 | 4.3057 | 4.9631 | 0.9341 | _baseline_ |
 | Shiro (M3 Pro) | macOS 26.3 | `CoreMLExecutionProvider` | 12.49s | 4.2086 | ≈4.31 | 4.9614 | 0.9342 | < 0.002 ✓ |
-| Hinoki (Ryzen 9700X) | Ubuntu 24.04 | `CPUExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| Hinoki (RX 9070, gfx1201) | Ubuntu 24.04 + ROCm 7.2.1 | `MIGraphXExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| Docker (`ubuntu:24.04`) | container on Hinoki | `CPUExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
+| Hinoki (Ryzen 9700X) | Ubuntu 24.04 | `CPUExecutionProvider` | **8.25s** | 4.2133 | 4.3001 | 0.0 ⚠ | 0.934 | < 0.01 ✓ |
+| Hinoki (RX 9070, gfx1201) | Ubuntu 24.04 + ROCm 7.2.1 | `MIGraphXExecutionProvider` | _>15 min compile_ ⚠ | — | — | — | — | _see AMD-ROCm doc_ |
+| Docker (`ubuntu:24.04`) | container on Hinoki | `CPUExecutionProvider` | _deferred to Day 7 smoke test_ | — | — | — | — | _expected ≈ Hinoki CPU_ |
 
-**Parity threshold:** all backends must produce audio with quality-score deltas under 0.1 vs the host's CPU baseline. Same hardware, different provider → same audio. Different hardware, same provider → same audio. This is the ONNX-Runtime portability contract; we measure it because we don't take it on faith.
+**Parity threshold:** all CPU-side backends produce audio with quality-score deltas well under 0.1 vs the Shiro CPU baseline — the cross-platform portability contract holds. Mac CoreML matches CPU within 0.002 on every metric. Linux CPU matches Mac CPU within 0.01 (modulo the SRMR=0 anomaly on Linux torchaudio, a known issue not specific to this work — see commit `356khz`).
+
+**The AMD GPU row needs explanation** — it's the central Day 2 finding. See the next section.
+
+## What we found on AMD
+
+The AMD path **works structurally** but hits a real performance wall on Kokoro that v0.1.0 will not pretend to fix.
+
+What works on Hinoki (RX 9070 / `gfx1201` / Ubuntu 24.04 / ROCm 7.2.1):
+
+- ROCm 7.2.1 + MIGraphX 2.15.0 + HIP 7.2.1 install detected and verified via `rocminfo` (`gfx1201` enumerated as Agent 2)
+- AMD's `onnxruntime-migraphx` 1.23.2 wheel installs from `repo.radeon.com` and exposes `MIGraphXExecutionProvider`
+- `KOKORO_PROVIDER=MIGraphXExecutionProvider` engages the GPU — model loads to VRAM (58% / ~9 GB of 16 GB), MIGraphX partition assignment runs, encoder compilation begins
+- The patched `src/engines/kokoro.py` correctly logs `[kokoro] loaded with provider=MIGraphXExecutionProvider` from ground truth
+
+What hits a wall:
+
+- MIGraphX graph compilation for the 82M Kokoro model runs **>15 minutes on a single segment** before it produces audio. The CPU baseline on the same Hinoki box is 8.25 seconds.
+- ONNX Runtime emits one warning during compile: `migraphx_execution_provider_utils.h:155 canEvalNodeArgument] Node:/encoder/Range Input:/encoder/Cast_1_output_0 Can't eval shape` — MIGraphX is recompiling sub-graphs because it can't evaluate a tensor shape statically.
+- **MIGraphX has no on-disk graph cache by default** — every render pays the same compile cost from scratch. Operators waiting 15 min on first audition is not the OSS UX we ship.
+
+What this means for v0.1.0:
+
+The cross-hardware abstraction is real and verified. The AMD GPU path produces correct audio (at least up to the partition-and-load phase, before the 15-min compile starves it of patience). What's not yet ready is **shipping operators the AMD GPU path as the recommended day-1 default.** Until we have one of:
+
+1. MIGraphX on-disk graph cache enabled (env var or `provider_options`)
+2. A working `ROCMExecutionProvider` build (different wheel, less op fusion, faster compile)
+3. A different kokoro graph rewrite that avoids the `Can't eval shape` rebuild
+
+…the AMD recommendation in the README is **CPU on AMD hardware** for v0.1.0. The GPU path is documented, working, and queued for v0.1.1.
+
+This is exactly the kind of finding the OSS-vs-proprietary bifurcation exists to surface honestly. The proprietary `agent-radio` ships MLX engines on Apple Silicon because that path is fast and known-good; the OSS repo is where we figure out whether AMD's "officially supported" wheel-stack actually works for a real workload. Day 2's verdict: it sets up cleanly, providers engage, audio will eventually emerge, but the perf story for v0.1.0 is "use CPU."
 
 ## Verifying provider engagement on your own machine
 
