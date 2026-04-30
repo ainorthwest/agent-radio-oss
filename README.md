@@ -4,7 +4,7 @@
 
 > **Status: WIP.** This repo is in active sprint toward v0.1.0-mvp.
 >
-> Day 1 (current): repo scaffolding + curated source port from `ainorthwest/agent-radio`.
+> Day 2 (current): Kokoro cross-hardware bring-up. Apple CoreML verified end-to-end with parity audio; AMD ROCm host configured (ROCm 7.2.1 / RX 9070 / `gfx1201`) with `onnxruntime_migraphx` install in progress; CPU baseline verified.
 >
 > Day 7 target: a stranger with an AMD GPU + Ubuntu can `git clone`, run a setup script, and produce a Haystack News episode + transcript in under 20 minutes.
 
@@ -37,14 +37,16 @@ The bifurcation is intentional:
 - **Per-platform setup scripts** (Day 5): `setup-amd.sh`, `setup-cpu.sh`, `setup-mac.sh`, `setup-cuda.sh`
 - **Hardware bring-up + smoke tests + dogfood pass** (Days 2, 6, 7)
 
-## Hardware (planned for v0.1.0-mvp)
+## Hardware
 
-| Backend | Status |
-|---|---|
-| AMD ROCm (RDNA4) | 🚧 Day 2 bring-up |
-| Apple Silicon (CoreML + Metal) | 🚧 Day 2 bring-up |
-| CPU (any Linux/Mac/WSL) | 🚧 Day 2 bring-up |
-| NVIDIA CUDA | ⚠️ scripts ship Day 5; validation deferred to long plan |
+Verified by Day 2 of the MVP sprint. See [`docs/hardware/`](./docs/hardware/) for per-platform install steps, observed quirks, and parity measurements.
+
+| Backend | Provider string | Status | Doc |
+|---|---|---|---|
+| Apple Silicon (M-series, CoreML) | `CoreMLExecutionProvider` | ✓ Verified on M3 Pro / macOS 26.3 | [`docs/hardware/apple-silicon.md`](./docs/hardware/apple-silicon.md) |
+| AMD ROCm (RDNA4 RX 9070 / `gfx1201`) | `ROCMExecutionProvider` / `MIGraphXExecutionProvider` | 🚧 Day 2 bring-up — host has ROCm 7.2.1 + MIGraphX 2.15.0; `onnxruntime_migraphx` install pending | [`docs/hardware/amd-rocm.md`](./docs/hardware/amd-rocm.md) |
+| CPU (any Linux/Mac/WSL) | `CPUExecutionProvider` | ✓ Verified on Shiro (M3 Pro / macOS 26.3); Hinoki + Docker baseline rendering | [`docs/hardware/cpu.md`](./docs/hardware/cpu.md) |
+| NVIDIA CUDA | `CUDAExecutionProvider` | ⚠️ Scripts ship Day 5; validation deferred to long plan | _not yet_ |
 
 ## License
 
