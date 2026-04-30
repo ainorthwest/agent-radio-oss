@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_BIN = "./whisper.cpp/main"
+DEFAULT_BIN = "./whisper.cpp/build/bin/whisper-cli"
 DEFAULT_MODEL = "./models/ggml-base.en.bin"
 DEFAULT_THREADS = "4"
 

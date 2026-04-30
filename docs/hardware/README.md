@@ -110,3 +110,37 @@ The fix (commit `138d094`):
 - Pin the public contract with `tests/test_engines.py` (11 tests) so future kokoro-onnx version drift can't silently break the cross-hardware story again
 
 **Lesson for the rest of the sprint:** every wrapped library is a candidate for the same class of regression. Day 3 (whisper.cpp via subprocess CLI flags) and Day 4 (Stable Audio Open via `stable-audio-tools` Python API) both have the same risk — log what *actually* ran, not what was requested. Added to `oss-mvp-sprint.md` Risk register.
+
+## Day 3a parity matrix — whisper.cpp
+
+Same input — `whisper.cpp/samples/jfk.wav` (11 seconds of speech),
+`ggml-base.en.bin` model. WER computed against the canonical JFK
+quote.
+
+| Host | Backend | Build flag | GPU engaged | Transcript | WER |
+|---|---|---|---|---|---|
+| Shiro (M3 Pro) | Metal | `-DGGML_METAL=ON` | Apple Metal | exact | 0.0 |
+| Hinoki (RX 9070, gfx1201) | HIP / ROCm 7.2.1 | `-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1201` | ROCm0 (dGPU) | exact | 0.0 |
+| Shiro (M3 Pro) | CPU | (none) | n/a | exact | 0.0 |
+| Hinoki | CPU | (none) | n/a | exact | 0.0 |
+| Hinoki | Vulkan | `-DGGML_VULKAN=ON` | _plumbed, not validated in v0.1.0_ | — | — |
+
+**The Kokoro vs whisper.cpp story on the same RX 9070 is the OSS
+thesis in one row:** Kokoro's MIGraphX path hangs >15 min on graph
+compile; whisper.cpp's HIP path transcribes in <1s. Same silicon,
+different abstractions, different outcomes. The gaps in local-edge
+inference live at the abstraction layer, not the hardware.
+
+## Day 3a round-trip verification
+
+End-to-end on Shiro M3 Pro: Kokoro renders text → whisper.cpp Metal
+transcribes → WER computed:
+
+| Reference | Engine | Hypothesis | WER | CER |
+|---|---|---|---|---|
+| "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country." | Kokoro `am_michael` → whisper.cpp Metal | identical | 0.0 | 0.0 |
+
+The full pipeline produces **WER 0.0** on synthesized speech of a
+canonical sentence — both engines agree on what was said, character
+for character. This is the round-trip score the autonomous-station
+agent uses to decide whether a segment shipped cleanly.
