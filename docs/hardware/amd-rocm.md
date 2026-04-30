@@ -71,26 +71,29 @@ export HSA_OVERRIDE_GFX_VERSION=12.0.0
 
 We did **not** need this on RX 9070 + ROCm 7.2.1.
 
-### `onnxruntime` ROCm install
+### `onnxruntime` for AMD: which wheel and where to get it
 
-`agent-radio-oss`'s `pyproject.toml` pulls a generic `onnxruntime` wheel via `kokoro-onnx`'s deps. The default wheel does **not** include ROCm support — you have to install `onnxruntime-rocm` explicitly:
+`agent-radio-oss`'s `pyproject.toml` pulls a generic `onnxruntime` wheel via `kokoro-onnx`'s deps. The default PyPI wheel is **CPU-only** — no AMD providers. You need a wheel with the AMD providers compiled in.
 
-```bash
-# After uv sync --extra tts --extra quality:
-uv pip install onnxruntime-rocm
-# or, with the AMD-published wheel index (more recent builds):
-# uv pip install onnxruntime-rocm --index-url https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/
-```
+**The trap:** PyPI has `onnxruntime-rocm 1.22.2.post1` — old, no longer current with ROCm 7.x. AMD publishes their own wheel at `repo.radeon.com` matched to each ROCm release, but they package it as **`onnxruntime-migraphx`**, not `onnxruntime-rocm`. The naming is confusing — that single wheel exposes the AMD GPU paths to ONNX Runtime.
 
-Verify the providers list now includes ROCm:
+For ROCm 7.2.1 + Python 3.12 (Hinoki):
 
 ```bash
-uv run python -c "import onnxruntime; print(onnxruntime.get_available_providers())"
-# Expect to see 'ROCMExecutionProvider' and/or 'MIGraphXExecutionProvider'
-# alongside 'CPUExecutionProvider'.
+uv pip install --no-deps "https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
 ```
 
-_Day 2 status: TBD — current Hinoki sync ran with default `onnxruntime` (CPU-only). Step 4 of the parity test will install `onnxruntime-rocm` and re-render._
+`--no-deps` is correct — the wheel will replace your existing `onnxruntime` package; we don't want pip to also pull in conflicting `numpy` / etc. Verify:
+
+```bash
+uv run python -c "import onnxruntime; print(onnxruntime.__version__); print(onnxruntime.get_available_providers())"
+# 1.23.2
+# ['MIGraphXExecutionProvider', 'CPUExecutionProvider']
+```
+
+**Surprise: this wheel exposes `MIGraphXExecutionProvider` only — not `ROCMExecutionProvider`.** The AMD-published `onnxruntime-migraphx` build ships the MIGraphX path as the GPU provider; the direct `ROCMExecutionProvider` is not included. That's expected — AMD has been steering ONNX users to the MIGraphX path because it does more op fusion and tends to outperform the direct ROCm path on real workloads. So on AMD with ROCm 7.2.1 + this wheel, **`KOKORO_PROVIDER=MIGraphXExecutionProvider` is the GPU path**. There is no separate "ROCM provider" to fall back to.
+
+(If you have an older ROCm install or a custom-built `onnxruntime-rocm` wheel that exposes both, both providers should work — they wrap different bits of the same stack.)
 
 ### Models
 
@@ -102,26 +105,25 @@ mkdir -p models
 
 ## Running an audition
 
+With the AMD `onnxruntime-migraphx` wheel installed (see Setup), use the MIGraphX provider:
+
 ```bash
-# Try ROCm first
-KOKORO_PROVIDER=ROCMExecutionProvider \
+KOKORO_PROVIDER=MIGraphXExecutionProvider \
   uv run radio render audition \
   library/programs/haystack-news/episodes/sample/script.json \
   --voice voices/kokoro-michael.yaml
-
-# If ROCMExecutionProvider misbehaves on your GPU, fall back to MIGraphX:
-KOKORO_PROVIDER=MIGraphXExecutionProvider \
-  uv run radio render audition ...
 ```
+
+If you have a different `onnxruntime` build that *also* exposes `ROCMExecutionProvider` (some custom builds do), `KOKORO_PROVIDER=ROCMExecutionProvider` should also work — both go through the ROCm runtime; MIGraphX adds graph compilation and op fusion on top.
 
 ## Verifying GPU engagement (the most important check)
 
 ONNX Runtime can silently fall back to CPU if a provider plugin fails to load — your render will *succeed*, your audio will be correct, but you will be using your CPU instead of your $500 GPU. `agent-radio-oss` defends against this in three places:
 
-**1. The `[kokoro] loaded with provider=...` log line is ground truth.** It reads providers back from the ONNX Runtime session after init. If you set `KOKORO_PROVIDER=ROCMExecutionProvider` and it logs `loaded with provider=CPUExecutionProvider`, you got CPU silently. You will also get an explicit warning:
+**1. The `[kokoro] loaded with provider=...` log line is ground truth.** It reads providers back from the ONNX Runtime session after init. If you set `KOKORO_PROVIDER=MIGraphXExecutionProvider` and it logs `loaded with provider=CPUExecutionProvider`, you got CPU silently. You will also get an explicit warning:
 
 ```
-[kokoro] WARNING: requested provider=ROCMExecutionProvider but ONNX Runtime
+[kokoro] WARNING: requested provider=MIGraphXExecutionProvider but ONNX Runtime
 loaded CPUExecutionProvider. Verify your onnxruntime install supports the
 requested provider.
 ```
@@ -143,32 +145,33 @@ _Filled in as Hinoki sync + ROCm-aware ONNX Runtime install completes. Same inpu
 | Provider | Render wall-clock | DNSMOS OVR | DNSMOS SIG | SRMR | GPU util peak | Notes |
 |---|---|---|---|---|---|---|
 | `CPUExecutionProvider` | TBD | TBD | TBD | TBD | 0% | Baseline |
-| `ROCMExecutionProvider` | TBD | TBD | TBD | TBD | TBD | Primary AMD path |
-| `MIGraphXExecutionProvider` | TBD | TBD | TBD | TBD | TBD | Fallback if ROCMExecutionProvider misbehaves |
+| `MIGraphXExecutionProvider` | TBD | TBD | TBD | TBD | TBD | Primary AMD GPU path with `onnxruntime-migraphx` wheel |
 
 ## ROCm vs MIGraphX — which provider to pick
 
-ONNX Runtime ships two AMD providers:
+ONNX Runtime defines two AMD providers; **whether you have access to either depends on which `onnxruntime` wheel you installed:**
 
-- **`ROCMExecutionProvider`** — direct ROCm execution. The default. Most coverage, similar plumbing model to CUDA.
+- **`ROCMExecutionProvider`** — direct ROCm execution. Available in custom-built `onnxruntime` and some older `onnxruntime-rocm` wheels.
 - **`MIGraphXExecutionProvider`** — uses MIGraphX as a graph compiler in front of ROCm. Can be faster for some graphs (better op fusion) but has narrower coverage; some ops fall back to CPU.
 
-The OSS repo's stance: **try ROCm first, fall back to MIGraphX if ROCm has issues for your specific GPU + driver combination.** Both produce identical output (same model, same graph, same numerics); the choice is purely about whether the runtime plumbing works on your hardware. Document which one worked for you.
+**With AMD's official `onnxruntime-migraphx` wheel for ROCm 7.2.1, only `MIGraphXExecutionProvider` is exposed.** AMD has standardized on the MIGraphX path because it does the op fusion and tends to outperform direct ROCm on real workloads. So the `KOKORO_PROVIDER` env var on Hinoki gets set to `MIGraphXExecutionProvider`, full stop — there's no separate ROCm path to fall back to with this wheel.
+
+If you compiled `onnxruntime` yourself with both providers enabled, both should work and produce identical output (same model, same graph, same numerics) — pick the one that loads without errors on your hardware.
 
 ## Quirks observed
 
-_To be filled in as the Hinoki audition runs._
+1. **The wheel name is the main trap.** PyPI's `onnxruntime-rocm 1.22.2.post1` is older than current ROCm. AMD's current wheel for ROCm 7.2.1 is published as **`onnxruntime-migraphx` 1.23.2** (note the package-name change) at `repo.radeon.com`. It exposes only `MIGraphXExecutionProvider` — there is no separate `ROCMExecutionProvider` from this wheel.
+2. **`onnxruntime-migraphx` replaces `onnxruntime`.** They both provide the `onnxruntime` Python module; install with `--no-deps` so pip doesn't get confused by the conflict.
+3. **`onnxruntime-migraphx` ships at version 1.23.2; PyPI `onnxruntime` is 1.25.x.** Slight downgrade. Acceptable for v0.1.0 (the API surface kokoro-onnx uses is stable across these versions); will need to track AMD's release cadence over time.
+4. **Multi-GPU host disambiguation.** Hinoki has the dGPU at `gfx1201` (RX 9070) and the iGPU at `gfx1036` (Raphael, integrated in the Ryzen 7 9700X). MIGraphX should auto-pick the dGPU but if not: `export HIP_VISIBLE_DEVICES=0` (or whichever index `rocm-smi` shows for your dGPU).
 
-Likely candidates based on ROCm 7.x release history:
-- ONNX Runtime ROCm wheel must match ROCm package version (7.2.1 → wheel built for 7.2.x)
-- `LD_LIBRARY_PATH` may need `/opt/rocm/lib` on the front for the wheel to resolve `librocm_smi64.so`
-- `HIP_VISIBLE_DEVICES` / `ROCR_VISIBLE_DEVICES` if multiple GPUs (Hinoki has the iGPU at `gfx1036` and the dGPU at `gfx1201` — provider should auto-pick the dGPU but verify)
+_Audition-specific quirks will be appended once the Hinoki render has been done._
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `[kokoro] WARNING: requested provider=ROCMExecutionProvider but ONNX Runtime loaded CPUExecutionProvider` | `onnxruntime-rocm` not installed, or wheel ABI mismatch | `uv pip install onnxruntime-rocm`; verify `import onnxruntime; print(onnxruntime.get_available_providers())` lists `'ROCMExecutionProvider'` |
+| `[kokoro] WARNING: requested provider=MIGraphXExecutionProvider but ONNX Runtime loaded CPUExecutionProvider` | AMD `onnxruntime-migraphx` wheel not installed, or wheel ABI mismatch with installed ROCm | Install the matching wheel for your ROCm version from `repo.radeon.com` (see Setup); verify with `import onnxruntime; print(onnxruntime.get_available_providers())` |
 | `rocminfo: command not found` | ROCm not installed | Follow the AMD Ubuntu install (this doc, §Setup) |
 | `rocminfo` runs but no GPU listed | User not in `render` and `video` groups | `sudo usermod -a -G render,video $USER` then log out/in |
 | Render hangs or crashes on first inference | Driver / ROCm version mismatch with `onnxruntime-rocm` wheel | Check ROCm version (`apt list --installed | grep rocm-core`) matches the wheel build (`onnxruntime-rocm` PyPI release notes); pin wheel version explicitly |

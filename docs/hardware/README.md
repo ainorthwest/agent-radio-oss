@@ -35,7 +35,6 @@ Same input — `library/programs/haystack-news/episodes/sample/script.json`, 5 s
 | Shiro (M3 Pro) | macOS 26.3 | `CPUExecutionProvider` | **9.05s** | 4.2086 | 4.3057 | 4.9631 | 0.9341 | _baseline_ |
 | Shiro (M3 Pro) | macOS 26.3 | `CoreMLExecutionProvider` | 12.49s | 4.2086 | ≈4.31 | 4.9614 | 0.9342 | < 0.002 ✓ |
 | Hinoki (Ryzen 9700X) | Ubuntu 24.04 | `CPUExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| Hinoki (RX 9070, gfx1201) | Ubuntu 24.04 + ROCm 7.2.1 | `ROCMExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 | Hinoki (RX 9070, gfx1201) | Ubuntu 24.04 + ROCm 7.2.1 | `MIGraphXExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 | Docker (`ubuntu:24.04`) | container on Hinoki | `CPUExecutionProvider` | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
 
