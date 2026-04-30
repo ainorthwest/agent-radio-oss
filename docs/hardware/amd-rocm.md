@@ -18,7 +18,7 @@ This doc captures the Day 2 (2026-04-30) bring-up on a real RDNA4 Radeon — the
 | HIP | 7.2.1 (`rocm-hip` package) |
 | MIGraphX | 2.15.0 |
 | Python | 3.12.3 |
-| `onnxruntime` | _filled in once Hinoki sync completes_ |
+| `onnxruntime-migraphx` | 1.23.2 (from `repo.radeon.com`) — replaces stock `onnxruntime` |
 | `kokoro-onnx` | 0.5.0 |
 
 `rocminfo` confirms the RX 9070 is `gfx1201`:

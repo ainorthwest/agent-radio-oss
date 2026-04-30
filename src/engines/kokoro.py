@@ -83,19 +83,35 @@ def get_kokoro() -> tuple[Any, int]:
         # `providers=` kwarg AND reads `ONNX_PROVIDER` (not `KOKORO_PROVIDER`)
         # from env. We translate to `ONNX_PROVIDER` here and *also* pass
         # `providers=` for 0.4.x backcompat, then read providers back from
-        # the session to verify what actually loaded.
+        # the session to verify what actually loaded. The env var is scoped
+        # to Kokoro init only — restored afterwards so future engines that
+        # also touch ONNX Runtime aren't surprised by a stale value.
+        prev_onnx_provider = os.environ.get("ONNX_PROVIDER")
         os.environ["ONNX_PROVIDER"] = provider
         try:
-            _kokoro = KokoroOnnx(
-                str(KOKORO_ONNX),
-                str(KOKORO_VOICES),
-                providers=[provider],
-            )
-        except TypeError:
-            _kokoro = KokoroOnnx(str(KOKORO_ONNX), str(KOKORO_VOICES))
+            try:
+                _kokoro = KokoroOnnx(
+                    str(KOKORO_ONNX),
+                    str(KOKORO_VOICES),
+                    providers=[provider],
+                )
+            except TypeError:
+                _kokoro = KokoroOnnx(str(KOKORO_ONNX), str(KOKORO_VOICES))
+        finally:
+            if prev_onnx_provider is None:
+                os.environ.pop("ONNX_PROVIDER", None)
+            else:
+                os.environ["ONNX_PROVIDER"] = prev_onnx_provider
         _kokoro_sample_rate = 24000
 
         actual = _read_session_providers(_kokoro)
+        if actual is None:
+            print(
+                "[kokoro] WARNING: could not read providers from ONNX Runtime "
+                "session; logging the requested provider only — actual provider "
+                "may differ.",
+                file=sys.stderr,
+            )
         _active_provider = actual or provider
         if actual and actual != provider:
             print(
