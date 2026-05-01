@@ -104,10 +104,28 @@ class TestRootApp:
         assert "agent-radio-oss" in result.output
 
     def test_dropped_commands_absent(self) -> None:
-        """Production-only command groups must not register in the OSS root app."""
+        """Production-only command groups must not register in the OSS root app.
+
+        Note: ``edit`` exists in OSS as the *script-segment* editor (Day 3b),
+        which is a different concept from upstream's ``edit`` (story scoring
+        + brief generation, AINW-flavored). The OSS edit command is generic
+        scaffolding per the bifurcation rule and is intentionally present.
+        """
         groups = {cmd.name for cmd in app.registered_groups}
-        for missing in ("edit", "eval", "music", "viz", "wire", "write"):
+        for missing in ("eval", "music", "viz", "wire", "write"):
             assert missing not in groups, f"command group {missing!r} leaked into OSS CLI"
+
+    def test_oss_edit_is_script_editor_not_story_scorer(self) -> None:
+        """Guard against accidentally porting upstream's editorial-brief
+        editor. OSS ``edit`` only exposes script-segment ops + anomalies."""
+        result = runner.invoke(app, ["edit", "--help"])
+        assert result.exit_code == 0
+        # Upstream edit had subcommands: brief, board, plan
+        assert "brief" not in result.output
+        assert "board" not in result.output
+        # OSS edit has: script, anomalies
+        assert "script" in result.output
+        assert "anomalies" in result.output
 
 
 # ---------------------------------------------------------------------------

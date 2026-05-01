@@ -92,6 +92,7 @@ def main(
 
 from src.cli.config_cmd import app as config_app  # noqa: E402
 from src.cli.distribute_cmd import app as distribute_app  # noqa: E402
+from src.cli.edit_cmd import app as edit_app  # noqa: E402
 from src.cli.library_cmd import app as library_app  # noqa: E402
 from src.cli.render_cmd import app as render_app  # noqa: E402
 from src.cli.run_cmd import app as run_app  # noqa: E402
@@ -100,6 +101,7 @@ from src.cli.stream_cmd import app as stream_app  # noqa: E402
 
 app.add_typer(config_app, name="config")
 app.add_typer(distribute_app, name="distribute")
+app.add_typer(edit_app, name="edit")
 app.add_typer(library_app, name="library")
 app.add_typer(render_app, name="render")
 app.add_typer(run_app, name="run")
