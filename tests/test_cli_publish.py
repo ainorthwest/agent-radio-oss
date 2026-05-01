@@ -64,6 +64,18 @@ class TestPublishEpisode:
         result = runner.invoke(app, ["publish", "episode", str(missing)])
         assert result.exit_code != 0
 
+    def test_corrupt_script_json_routes_through_err(self, runner, tmp_path: Path):
+        """A malformed script.json should produce a clean error exit, not a
+        raw json.JSONDecodeError traceback."""
+        from src.cli import app
+
+        (tmp_path / "script.json").write_text("{not valid json")
+        (tmp_path / "manifest.json").write_text(json.dumps(SAMPLE_MANIFEST))
+        result = runner.invoke(app, ["publish", "episode", str(tmp_path)])
+        assert result.exit_code != 0
+        # Should be wrapped through err(), not a raw traceback
+        assert "publish failed" in result.output.lower() or "error" in result.output.lower()
+
     def test_dry_run_does_not_write(self, runner, episode_dir: Path):
         from src.cli import app
 

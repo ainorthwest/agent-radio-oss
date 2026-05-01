@@ -52,6 +52,11 @@ def episode(
         result = publish(episode_dir, llm_enabled=llm)
     except FileNotFoundError as exc:
         err(str(exc))
+    except (OSError, ValueError) as exc:
+        # Covers permission errors, full-disk, json.JSONDecodeError
+        # (subclass of ValueError), corrupt YAML frontmatter, etc.
+        # Anything else is genuinely unexpected and gets a real traceback.
+        err(f"publish failed: {exc}")
 
     output(
         state,
