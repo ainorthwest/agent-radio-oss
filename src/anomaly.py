@@ -34,6 +34,13 @@ _AVG_WORD_S = 0.45
 _DURATION_LOW_RATIO = 0.5
 _DURATION_HIGH_RATIO = 2.0
 _SILENCE_DEFAULT_THRESHOLD = 0.4
+# Frames whose RMS is below this fraction of the segment's peak count
+# as silent. Most VADs use 5-10% of peak; we deliberately use a lower
+# floor (1%) because Kokoro's natural prosody includes very-quiet
+# unvoiced fricatives we don't want to misclassify as silence. Combined
+# with the 40% segment-level threshold above, false positives on clean
+# Kokoro output stay rare. Tune per-engine if needed.
+_SILENCE_FRAME_THRESHOLD = 0.01
 _WER_FLOOR = 0.05
 _WER_OUTLIER_RATIO = 2.0
 
@@ -91,7 +98,7 @@ def check_silence(
             "ratio": 1.0,
         }
 
-    silent_frames = float(np.sum(rms < peak * 0.01))
+    silent_frames = float(np.sum(rms < peak * _SILENCE_FRAME_THRESHOLD))
     ratio = silent_frames / len(rms)
     if ratio < threshold:
         return None

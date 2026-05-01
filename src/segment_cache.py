@@ -93,10 +93,18 @@ class SegmentCache:
         return None
 
     def put(self, segment_hash: str, wav_path: Path) -> None:
-        """Store a rendered WAV under ``segment_hash``."""
+        """Store a rendered WAV under ``segment_hash``.
+
+        Writes to a sibling ``.tmp`` file then atomically renames into
+        place, so an interrupted ``put()`` (OOM-kill, power loss) cannot
+        leave a corrupt entry that a later ``get()`` would happily
+        return as a "hit." Same-filesystem rename is atomic on POSIX.
+        """
         dest = self._path(segment_hash)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(wav_path, dest)
+        tmp = dest.with_suffix(dest.suffix + ".tmp")
+        shutil.copyfile(wav_path, tmp)
+        tmp.replace(dest)
 
     def copy_to(self, segment_hash: str, dest: Path) -> bool:
         """Copy the cached WAV to ``dest``. Returns True on hit, False on miss.

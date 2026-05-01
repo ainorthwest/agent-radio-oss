@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from src.cli import State
@@ -43,8 +43,12 @@ def output(state: State, data: Any, human_fmt: str | None = None) -> None:
         print(data)
 
 
-def err(msg: str) -> None:
-    """Print an error to stderr and exit with code 1."""
+def err(msg: str) -> NoReturn:
+    """Print an error to stderr and exit with code 1.
+
+    Annotated ``NoReturn`` so callers can rely on control-flow guarantees:
+    code after ``err(...)`` is unreachable. Type checkers enforce this.
+    """
     print(f"error: {msg}", file=sys.stderr)
     raise SystemExit(1)
 

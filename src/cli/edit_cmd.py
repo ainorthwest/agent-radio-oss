@@ -80,7 +80,6 @@ def script(
         elif replace is not None:
             if text is None:
                 err("--replace requires --text")
-            assert text is not None  # for type-narrowing; err() raises SystemExit
             new_script, diff = editor.replace_text(script_data, replace, text)
         elif reorder is not None:
             try:
@@ -88,12 +87,13 @@ def script(
             except ValueError:
                 err(f"--reorder must be a comma-separated list of integers, got {reorder!r}")
             new_script, diff = editor.reorder_segments(script_data, order)
-        else:
-            assert change_voice is not None
+        elif change_voice is not None:
             if speaker is None:
                 err("--change-voice requires --speaker")
-            assert speaker is not None
             new_script, diff = editor.change_voice(script_data, change_voice, speaker)
+        else:
+            # Unreachable: ops_chosen guard above ensures exactly one option.
+            err("internal error: no edit operation selected")
     except (IndexError, ValueError) as exc:
         err(str(exc))
 
