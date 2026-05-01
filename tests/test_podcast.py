@@ -174,6 +174,95 @@ class TestBuildFeed:
         assert "Mon, 16 Mar 2026" in xml
 
 
+PODCAST_NS = "https://podcastindex.org/namespace/1.0"
+
+
+class TestPodcastingTwoNamespace:
+    """Verify Podcasting 2.0 namespace tags emit correctly."""
+
+    def test_namespace_declared(self) -> None:
+        metadata = PodcastMetadata(title="Test")
+        xml = build_feed(metadata, [])
+        # The podcast namespace must appear when registered
+        assert "podcastindex.org/namespace/1.0" in xml or "podcast:" in xml
+
+    def test_per_episode_transcript_tag(self) -> None:
+        metadata = PodcastMetadata(title="Test")
+        ep = EpisodeEntry(
+            title="Episode 1",
+            description="First ep",
+            audio_url="https://example.com/ep1.mp3",
+            pub_date=datetime(2026, 5, 1, tzinfo=UTC),
+            duration_seconds=180,
+            guid="ep1",
+            transcript_url="https://example.com/ep1.srt",
+        )
+        xml = build_feed(metadata, [ep])
+        root = fromstring(xml)
+        # Transcript tag should be on the item with type=application/x-subrip
+        item = root.find("channel/item")
+        assert item is not None
+        transcript = item.find(f"{{{PODCAST_NS}}}transcript")
+        assert transcript is not None
+        assert transcript.attrib["url"] == "https://example.com/ep1.srt"
+        assert "x-subrip" in transcript.attrib["type"]
+
+    def test_per_episode_chapters_tag(self) -> None:
+        metadata = PodcastMetadata(title="Test")
+        ep = EpisodeEntry(
+            title="Episode 1",
+            description="First ep",
+            audio_url="https://example.com/ep1.mp3",
+            pub_date=datetime(2026, 5, 1, tzinfo=UTC),
+            duration_seconds=180,
+            guid="ep1",
+            chapters_url="https://example.com/ep1-chapters.json",
+        )
+        xml = build_feed(metadata, [ep])
+        root = fromstring(xml)
+        item = root.find("channel/item")
+        assert item is not None
+        chapters = item.find(f"{{{PODCAST_NS}}}chapters")
+        assert chapters is not None
+        assert chapters.attrib["url"] == "https://example.com/ep1-chapters.json"
+        assert "json+chapters" in chapters.attrib["type"]
+
+    def test_channel_person_tags_from_persons(self) -> None:
+        metadata = PodcastMetadata(
+            title="Test",
+            persons=[
+                {"name": "Michael", "role": "host", "img": "https://example.com/m.jpg"},
+                {"name": "Bella", "role": "host"},
+            ],
+        )
+        xml = build_feed(metadata, [])
+        root = fromstring(xml)
+        channel = root.find("channel")
+        assert channel is not None
+        persons = channel.findall(f"{{{PODCAST_NS}}}person")
+        assert len(persons) == 2
+        names = {p.text for p in persons}
+        assert names == {"Michael", "Bella"}
+
+    def test_optional_tags_omitted_when_unset(self) -> None:
+        """Episodes without transcript/chapters URLs should not emit empty tags."""
+        metadata = PodcastMetadata(title="Test")
+        ep = EpisodeEntry(
+            title="Episode 1",
+            description="First ep",
+            audio_url="https://example.com/ep1.mp3",
+            pub_date=datetime(2026, 5, 1, tzinfo=UTC),
+            duration_seconds=180,
+            guid="ep1",
+        )
+        xml = build_feed(metadata, [ep])
+        root = fromstring(xml)
+        item = root.find("channel/item")
+        assert item is not None
+        assert item.find(f"{{{PODCAST_NS}}}transcript") is None
+        assert item.find(f"{{{PODCAST_NS}}}chapters") is None
+
+
 class TestCollectEpisodes:
     def test_collects_from_manifests(self, tmp_path: Path) -> None:
         ep_dir = tmp_path / "episodes" / "2026-03-16"

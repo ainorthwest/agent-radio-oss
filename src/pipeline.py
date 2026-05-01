@@ -296,6 +296,22 @@ def _run_stages(
         except Exception as exc:
             print(f"  WARNING: Catalog recording failed: {exc}")
 
+    # Stage 3.5: Publisher — derivative content fan-out (non-blocking).
+    # Runs after quality so we don't bother publishing artifacts for
+    # episodes we'd rather not ship; but stays non-blocking so a
+    # publisher failure can't kill the pipeline.
+    try:
+        from src.publisher import publish
+
+        episode_dir_for_publish = audio_path.parent
+        if (episode_dir_for_publish / "script.json").exists() and (
+            episode_dir_for_publish / "manifest.json"
+        ).exists():
+            pub_result = publish(episode_dir_for_publish, llm_enabled=False)
+            print(f"  Published: {len(pub_result['written'])} artifacts")
+    except Exception as exc:  # noqa: BLE001 — publisher stage is non-blocking
+        print(f"  WARNING: Publisher failed: {exc}")
+
     # Stage 4: Distribute
     if dry_run:
         print("\n[4/4] Distribute skipped (--dry-run or quality gate)")
