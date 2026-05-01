@@ -214,6 +214,86 @@ If you compiled `onnxruntime` yourself with both providers enabled, both should 
 | ROCm provider engages but output is silent / garbled | Numerical issue in graph compilation; very unusual on RDNA4 | Try `KOKORO_PROVIDER=MIGraphXExecutionProvider` as fallback; file an upstream `onnxruntime` issue with reproduction |
 | `rocm-smi` shows utilization on the wrong GPU (e.g., iGPU instead of dGPU) | Multi-GPU host, ROCm picked first device | `export HIP_VISIBLE_DEVICES=0` (or whichever index `rocm-smi` shows for your dGPU) |
 
+## whisper.cpp on AMD ROCm (Day 3a)
+
+Quality Pillar 3 — speech intelligibility — uses whisper.cpp (MIT,
+CMake-based, hardware-portable via compile flags). On Hinoki the HIP
+backend works on the first try.
+
+### Hinoki build (RX 9070, gfx1201, ROCm 7.2.1)
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+cd whisper.cpp
+cmake -B build-hip -DGGML_HIP=ON -DCMAKE_BUILD_TYPE=Release \
+  -DAMDGPU_TARGETS=gfx1201
+cmake --build build-hip --config Release -j 8
+```
+
+Compiles cleanly against `/opt/rocm-7.2.1/lib/llvm/bin/clang++` (Clang
+22.0.0). The `whisper-cli` binary lands in `build-hip/bin/`. No special
+`HSA_OVERRIDE_GFX_VERSION` flag needed — gfx1201 is supported by ROCm
+7.2.1 directly.
+
+Download a model:
+
+```bash
+mkdir -p models
+bash whisper.cpp/models/download-ggml-model.sh base.en models/
+```
+
+Wire it into Agent Radio via env vars (no hard-coded paths in `src/stt.py`):
+
+```bash
+export RADIO_WHISPER_BIN=$(pwd)/whisper.cpp/build-hip/bin/whisper-cli
+export RADIO_WHISPER_MODEL=$(pwd)/models/ggml-base.en.bin
+```
+
+### Verifying GPU engagement
+
+```bash
+$ ./whisper.cpp/build-hip/bin/whisper-cli \
+    -m models/ggml-base.en.bin -f whisper.cpp/samples/jfk.wav 2>&1 | grep -E 'gpu|backend|Radeon'
+whisper_init_with_params_no_state: use gpu    = 1
+whisper_init_with_params_no_state: gpu_device = 0
+  Device 0: AMD Radeon RX 9070, gfx1201 (0x1201), VMM: no, Wave Size: 32, VRAM: 16304 MiB
+  Device 1: AMD Radeon Graphics, gfx1036 (0x1036), VMM: no, Wave Size: 32, VRAM: 13804 MiB
+whisper_init_with_params_no_state: backends   = 2
+whisper_backend_init_gpu: device 0: ROCm0 (type: 1)
+whisper_backend_init_gpu: using ROCm0 backend
+```
+
+ROCm0 backend engages on the dGPU automatically; the iGPU is enumerated
+but skipped. JFK transcription returns the expected text.
+
+### Pipeline test
+
+The `tests/test_stt.py` integration test is gated on
+`RADIO_WHISPER_BIN` / `RADIO_WHISPER_MODEL`; with both set, all 30
+stt tests pass on Hinoki:
+
+```
+$ uv run pytest tests/test_stt.py -v
+30 passed in 0.59s
+```
+
+### Vulkan fallback (plumbed, not validated in v0.1.0)
+
+If your AMD setup lacks ROCm or HIP fails, whisper.cpp also supports a
+Vulkan backend (`-DGGML_VULKAN=ON`). Hinoki has `vulkaninfo` available;
+this path is plumbed but not validated in v0.1.0 since HIP works.
+Documented for AMD users on RDNA cards where ROCm support is patchy.
+
+### What this teaches the OSS thesis
+
+Day 2 found that **Kokoro via ONNX/MIGraphX hangs on RX 9070** at first
+graph compile (>15 min, never produced WAV). Day 3 found that
+**whisper.cpp via HIP works on RX 9070 on the first try**. Same GPU,
+two different hardware abstractions, two different outcomes. The gaps
+in local-edge inference are real, and they live at the abstraction
+layer, not the silicon. Document them, ship them, let operators see
+the seam.
+
 ## Next backends
 
 - Apple Silicon: see [`apple-silicon.md`](./apple-silicon.md)

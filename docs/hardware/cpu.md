@@ -113,6 +113,71 @@ CPU's role is to be the boring, predictable, always-available reference everyone
 | `ModuleNotFoundError: kokoro_onnx` | Missing `--extra tts` | `uv sync --extra tts --extra quality --extra dev` |
 | Render produces silence / very short WAV | Kokoro model files truncated or wrong version | Re-download `kokoro-v1.0.onnx` (310 MB) and `voices-v1.0.bin` (27 MB); verify SHA |
 
+## whisper.cpp on CPU (Day 3a)
+
+The CPU baseline for Pillar 3. whisper.cpp ships an excellent CPU
+backend — it was the original target of the project. No GPU flag, no
+provider plumbing.
+
+### Build (any platform)
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+cd whisper.cpp
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j 4
+```
+
+CMake auto-detects platform optimizations: AVX2/AVX512 on x86,
+NEON+dotprod on ARM, Accelerate.framework BLAS on macOS. On Linux you
+may want `sudo apt install libopenblas-dev` first for OpenBLAS — not
+required, but helps.
+
+Download a model:
+
+```bash
+mkdir -p models
+bash whisper.cpp/models/download-ggml-model.sh base.en models/
+```
+
+Wire into Agent Radio:
+
+```bash
+export RADIO_WHISPER_BIN=$(pwd)/whisper.cpp/build/bin/whisper-cli
+export RADIO_WHISPER_MODEL=$(pwd)/models/ggml-base.en.bin
+```
+
+### Performance (rough)
+
+`base.en` on the JFK 11-second sample, single core, no AVX-512:
+
+| Host | CPU | Time |
+|---|---|---|
+| Hinoki | Ryzen 7 9700X (Zen 5) | sub-second |
+| Shiro | Apple M3 Pro (Metal) | sub-second |
+| Hinoki | Ryzen 7 9700X (CPU only) | ~2-3s |
+| Generic Linux VM | 2 vCPU | ~10-15s |
+
+`base.en` is the v0.1.0 default — small (148 MB), fast on CPU,
+acceptable WER for round-trip checks. Upgrade to `medium.en` (1.5 GB)
+if you need lower WER and have the time/RAM. `tiny.en` (75 MB) is
+faster but its WER on TTS-rendered speech can exceed the gate
+threshold; only use it for real-time / streaming.
+
+### What this teaches the OSS thesis
+
+Three different cross-hardware abstractions in one repo:
+
+| Component | Abstraction | What it teaches |
+|---|---|---|
+| Kokoro (TTS) | ONNX Runtime providers (env var) | Wheel name + provider availability matter |
+| whisper.cpp (STT) | CMake compile flag | Pick your backend at build time, not runtime |
+| Stable Audio Open (Day 4) | PyTorch device string | Same device API, ROCm aliases as CUDA |
+
+A contributor who runs all three on AMD has learned three different
+ways the GPU acceleration story plays out. That's the educational
+point of the OSS repo.
+
 ## Next backends
 
 - AMD ROCm (RDNA4 + RDNA3): see [`amd-rocm.md`](./amd-rocm.md)

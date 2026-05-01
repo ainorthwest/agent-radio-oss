@@ -383,21 +383,25 @@ class TestIntelligibility:
         assert results["wer"] == -1.0
         assert results["cer"] == -1.0
 
-    def test_missing_mlx_whisper_returns_sentinel(self, speech_like_audio: Path, monkeypatch):
-        """When mlx_whisper is not installed, should return -1 sentinel values."""
-        import builtins
+    def test_missing_whisper_binary_returns_sentinel(self, speech_like_audio: Path, monkeypatch):
+        """When whisper.cpp binary is missing, should return -1 sentinel values."""
+        from src.stt import WhisperUnavailableError
 
-        real_import = builtins.__import__
+        def fake_transcribe(audio_path):
+            raise WhisperUnavailableError("binary missing")
 
-        def mock_import(name, *args, **kwargs):
-            if name == "mlx_whisper":
-                raise ImportError("No module named 'mlx_whisper'")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", mock_import)
+        monkeypatch.setattr("src.stt.transcribe", fake_transcribe)
         results = _compute_intelligibility(speech_like_audio, "Hello world")
         assert results["wer"] == -1.0
         assert results["cer"] == -1.0
+
+    def test_whisper_cpp_round_trip_computes_wer(self, speech_like_audio: Path, monkeypatch):
+        """When whisper.cpp succeeds, _compute_intelligibility should compute WER from the transcript."""
+        # Whisper returns the exact reference text → WER == 0.0
+        monkeypatch.setattr("src.stt.transcribe", lambda audio_path: "Hello world")
+        results = _compute_intelligibility(speech_like_audio, "Hello world")
+        assert results["wer"] == 0.0
+        assert results["cer"] == 0.0
 
     def test_wer_flagging_in_standalone_scoring(self):
         """High WER should produce warning notes in standalone scoring."""
@@ -476,39 +480,12 @@ class TestIntelligibility:
         assert report.cer == -1.0
 
     def test_tags_stripped_from_script_text(self, speech_like_audio: Path, monkeypatch):
-        """Non-speech tags like [laugh] and (sighs) should be stripped before comparison."""
-        import builtins
-
-        real_import = builtins.__import__
-
-        captured_ref = {}
-
-        # Mock both mlx_whisper and jiwer to capture what reference text is passed
-        class MockWhisper:
-            @staticmethod
-            def transcribe(*args, **kwargs):
-                return {"text": "Hello world"}
-
-        class MockJiwer:
-            @staticmethod
-            def wer(ref, hyp):
-                captured_ref["text"] = ref
-                return 0.0
-
-            @staticmethod
-            def cer(ref, hyp):
-                return 0.0
-
-        def mock_import(name, *args, **kwargs):
-            if name == "mlx_whisper":
-                return MockWhisper()
-            if name == "jiwer":
-                return MockJiwer()
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", mock_import)
-        _compute_intelligibility(speech_like_audio, "[laugh] Hello (sighs) world")
-        assert captured_ref.get("text") == "Hello world"
+        """Non-speech tags like [laugh] (sighs) should be stripped — WER between
+        '[laugh] Hello (sighs) world' and 'Hello world' is 0.0 because both
+        normalize to the same tokens."""
+        monkeypatch.setattr("src.stt.transcribe", lambda audio_path: "Hello world")
+        results = _compute_intelligibility(speech_like_audio, "[laugh] Hello (sighs) world")
+        assert results["wer"] == 0.0
 
 
 class TestEngineReference:

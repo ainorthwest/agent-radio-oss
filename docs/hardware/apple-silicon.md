@@ -113,6 +113,72 @@ requested provider.
 | Render hangs on first segment for >30s | First-time CoreML graph compilation; cache cold | Wait. Subsequent runs use the cache and are fast. |
 | `error: macOS version too old` from CoreML | macOS <13 (Ventura) | Upgrade macOS, or use `KOKORO_PROVIDER=CPUExecutionProvider` |
 
+## whisper.cpp on Apple Silicon (Day 3a)
+
+Quality Pillar 3 uses whisper.cpp with the Metal backend on Apple
+Silicon. Build is one command — Metal is auto-detected.
+
+### Shiro build (M3 Pro, macOS 14)
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+cd whisper.cpp
+cmake -B build -DGGML_METAL=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j 8
+```
+
+Output: `whisper.cpp/build/bin/whisper-cli`. CMake auto-finds the
+Metal framework and `Accelerate.framework` for BLAS. Apple Clang ships
+with Xcode Command Line Tools (`xcode-select --install` if missing).
+
+Download a model:
+
+```bash
+mkdir -p models
+bash whisper.cpp/models/download-ggml-model.sh base.en models/
+```
+
+Wire into Agent Radio:
+
+```bash
+export RADIO_WHISPER_BIN=$(pwd)/whisper.cpp/build/bin/whisper-cli
+export RADIO_WHISPER_MODEL=$(pwd)/models/ggml-base.en.bin
+```
+
+### Round-trip test (Kokoro → whisper.cpp)
+
+End-to-end smoke test on Shiro M3 Pro: render a JFK quote with Kokoro
+(CoreML), transcribe with whisper.cpp (Metal), score WER:
+
+```
+[kokoro] loaded with provider=CPUExecutionProvider
+[render] voice: am_michael
+[render] wrote /tmp/audition.wav (6.72s)
+[whisper] 'And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.'
+[score] WER = 0.0000  CER = 0.0000
+```
+
+Identical text round-trip. The `tests/test_stt.py` integration test
+also passes when env vars are set:
+
+```
+$ RADIO_WHISPER_BIN=$(pwd)/whisper.cpp/build/bin/whisper-cli \
+  RADIO_WHISPER_MODEL=$(pwd)/models/ggml-base.en.bin \
+  uv run pytest tests/test_stt.py::TestTranscribeIntegration -v
+1 passed
+```
+
+### Quirks observed
+
+1. **CMake 4.x, not Make.** Modern whisper.cpp builds via CMake; the
+   old `make GGML_METAL=1` invocation is deprecated. The `main`
+   binary still appears in `build/bin/` for back-compat, but
+   `whisper-cli` is the canonical name. `src/stt.py` defaults to the
+   new path.
+2. **First inference compiles Metal kernels.** ~1s of warmup the first
+   time the binary runs; subsequent invocations are fast. No
+   user-visible cache file.
+
 ## Next backends
 
 - AMD ROCm: see [`amd-rocm.md`](./amd-rocm.md)
