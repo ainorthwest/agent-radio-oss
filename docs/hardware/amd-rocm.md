@@ -145,38 +145,72 @@ Same input as the Apple Silicon doc: `library/programs/haystack-news/episodes/sa
 | Provider | Render wall-clock | DNSMOS OVR | DNSMOS SIG | SRMR | Repetition | GPU peak | Notes |
 |---|---|---|---|---|---|---|---|
 | `CPUExecutionProvider` | **8.25s** | 4.2133 | 4.3001 | 0.0 ⚠ | 0.934 | 0% | Baseline. SRMR=0 is a known Linux/torchaudio bug, not a parity issue (see commit `356khz`). |
-| `MIGraphXExecutionProvider` | **>15 min compile** ⚠ | — | — | — | — | 32% (during partition), then 3% (compile loop) | Engaged, partitioned, model loaded into VRAM (58%), but encoder graph compilation ran > 15 min without producing a WAV. Killed before save. See [Why MIGraphX is slow on Kokoro](#why-migraphx-is-slow-on-kokoro). |
+| `MIGraphXExecutionProvider` | **fails after compile** ⚠ | — | — | — | — | 58% VRAM, partition + compile complete in ~30s | Compile + .mxr cache write succeed, then MIGraphX's runtime API throws a null-pointer error before audio is produced. See [What's actually broken on the AMD GPU path](#whats-actually-broken-on-the-amd-gpu-path). |
 
 **Cross-host CPU parity:** Hinoki CPU vs Shiro CPU produces audio with all metric deltas under 0.01 (DNSMOS OVR Δ = 0.0047, repetition Δ = 0.0001). Same Kokoro graph, same float32 outputs across operating systems and CPU vendors.
 
-## Why MIGraphX is slow on Kokoro
+## What's actually broken on the AMD GPU path
 
-Day 2 ran the Hinoki MIGraphX path end-to-end and logged exactly what we hit. Useful context for the next AMD operator:
+Day 2 reported a "15-minute hang on first compile" and recommended
+CPU on AMD. The CPU recommendation stands, but the diagnosis was
+incomplete. A follow-up investigation
+([`docs/investigations/kokoro-amd-rocm.md`](../investigations/kokoro-amd-rocm.md))
+re-ran the path with explicit `provider_options` and found:
 
-The render begins by loading the Kokoro ONNX graph and asking MIGraphX to plan execution. ONNX Runtime emits the partition-coverage assignment, and MIGraphX warms up. **Within seconds, the GPU shows VRAM allocated to ~58%** — Kokoro's 310 MB model is fully resident on the RX 9070. So far so good.
+1. **First-inference graph compile completes in 25-41 seconds**, not
+   15+ minutes. The Day 2 wait was killed before compile finished and
+   was running with default provider options that may have been
+   slower.
+2. **MIGraphX caching DOES work.** A 32 MB `.mxr` is written under
+   `migraphx_model_cache_dir`, and a warm cache reaches `sess.run` in
+   ~1 s.
+3. **The actual blocker is downstream of compile.** After compile +
+   cache write succeed, MIGraphX's runtime parameter-shape API throws:
 
-Then MIGraphX hits one of Kokoro's encoder ops it can't statically shape:
+   ```
+   migraphx_program_parameter_shapes_size: Error:
+     .../AMDMIGraphX/src/api/api.cpp:1345: operator():
+     Bad parameter program_parameter_shapes: Null pointer
+   ```
 
-```
-[W:onnxruntime:Default, migraphx_execution_provider_utils.h:155 canEvalNodeArgument]
-Node:/encoder/Range Input:/encoder/Cast_1_output_0 Can't eval shape
-```
+   ONNX Runtime surfaces this as
+   `[ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : Non-zero status code
+   returned while running MGXKernel_graph_main_graph_*_1 node ...
+   Status Message: Failed to call function`. **No audio is produced.**
+   The bug is invariant under fp16/fp32 and cache on/off (4/4
+   ablations identical).
+4. **MIGraphX itself is healthy.**
+   `migraphx-driver perf --test` runs at 46,819 inferences/sec on the
+   gfx1201 GPU. The bug is specific to the ONNX Runtime → MIGraphX
+   hand-off for this graph.
+5. **The `/encoder/Range` warning is benign.** It tells MIGraphX to
+   route that node to CPU (correct behavior); the surrounding subgraph
+   still compiles.
+6. **Direct MIGraphX cannot parse Kokoro at all** —
+   `migraphx-driver perf --onnx kokoro-v1.0.onnx` throws
+   `PARSE_RANGE: limit arg dynamic shape is not supported`. ONNX
+   Runtime correctly avoids this by partitioning Range out before
+   handing the graph to MIGraphX. So this parser limitation is real
+   but doesn't matter for the ORT path.
 
-This isn't an error — it's a deferment. MIGraphX falls back to dynamic-shape compilation, which means **rebuilding sub-graphs at runtime**. For Kokoro's 2256-node graph with 129 partitions, that recompilation chain pinned a single CPU core at 100% for 15+ minutes before we killed the process.
+GitHub code search returned **0 hits** for the exact null-pointer error
+string — this configuration appears to be a novel observation. Related
+upstream tickets:
 
-Two compounding factors make this worse:
+- [ROCm/AMDMIGraphX#4618](https://github.com/ROCm/AMDMIGraphX/issues/4618)
+  — open, AMD-assigned. Reporter on gfx1101 + Kokoro v1.0 + ORT
+  migraphx 1.23.2 hits the same `/encoder/Range` warning, observes
+  per-shape recompiles, and reports kernel 6.17 + Ubuntu 25.10 as the
+  proximate cause. Hinoki is on Ubuntu 24.04 + kernel 6.17.
+- [ROCm/AMDMIGraphX#4029](https://github.com/ROCm/AMDMIGraphX/issues/4029)
+  — closed, gfx1201 + ArtCNN, AMD acknowledged "compile time can be
+  15-25 min, expected behavior" but did not ship a fix.
 
-1. **No persistent graph cache.** `onnxruntime-migraphx` 1.23.2 does not enable an on-disk MIGraphX `.mxr` cache by default. Every fresh process pays the full compile cost. There is no "second run is fast" path until we configure caching explicitly via `provider_options`.
-
-2. **The graph is built for static-shape inference.** Kokoro's encoder uses `Range` ops that depend on input length — exactly the dynamic-shape pattern MIGraphX struggles with. CoreML and CPU handle this fine because they don't try to compile + fuse aggressively; MIGraphX's whole value-prop is op fusion, which requires shape inference.
-
-**Three v0.1.1 paths to fix this**, in increasing complexity:
-
-1. Set MIGraphX-specific `provider_options` for shape inference and caching (env vars: `ORT_MIGRAPHX_DUMP_MODEL_PATH`, `ORT_MIGRAPHX_LOAD_COMPILED_MODEL`, etc.). May fix the issue without code changes.
-2. Find or compile a `onnxruntime-rocm` wheel that exposes `ROCMExecutionProvider` directly — bypasses MIGraphX's compilation step at the cost of less op fusion.
-3. Re-export Kokoro to ONNX with static input shapes baked in (operator does this once at install; runtime is then fast).
-
-For v0.1.0-mvp, **the AMD recommendation is `KOKORO_PROVIDER=CPUExecutionProvider`** — the same Hinoki box renders the audition in 8.25s on the Ryzen 7 9700X CPU, well within OSS UX expectations. The GPU path is documented, plumbing is verified, and the perf wall is queued for v0.1.1.
+For v0.1.0-mvp, **the AMD recommendation remains
+`KOKORO_PROVIDER=CPUExecutionProvider`** — the Hinoki Ryzen 7 9700X
+renders the audition in 8.25s. v0.1.1 next-step is filing the
+post-compile null-pointer with AMD using our reproducer; until that's
+fixed, the GPU path doesn't ship.
 
 ## ROCm vs MIGraphX — which provider to pick
 
@@ -200,14 +234,15 @@ If you compiled `onnxruntime` yourself with both providers enabled, both should 
    Verify with `import onnxruntime; print(onnxruntime.get_available_providers())` — should show `['MIGraphXExecutionProvider', 'CPUExecutionProvider']`.
 3. **`onnxruntime-migraphx` ships at version 1.23.2; PyPI `onnxruntime` is 1.25.x.** Slight downgrade. Acceptable for v0.1.0 (the API surface kokoro-onnx uses is stable across these versions); will need to track AMD's release cadence over time.
 4. **Multi-GPU host disambiguation.** Hinoki has the dGPU at `gfx1201` (RX 9070) and the iGPU at `gfx1036` (Raphael, integrated in the Ryzen 7 9700X). MIGraphX should auto-pick the dGPU; the actual run on Hinoki picked it correctly without `HIP_VISIBLE_DEVICES`. If yours doesn't: `export HIP_VISIBLE_DEVICES=0` (or whichever index `rocm-smi` shows for your dGPU).
-5. **MIGraphX graph-compile time on Kokoro is the perf wall.** First-render for the 5-segment audition exceeded 15 minutes of CPU work for graph compilation, never producing a WAV. See [Why MIGraphX is slow on Kokoro](#why-migraphx-is-slow-on-kokoro). For v0.1.0, `CPUExecutionProvider` on AMD hardware is the recommended path (8.25s on Hinoki Ryzen 9700X — same audio output, dramatically better UX).
+5. **MIGraphX graph-compile is fast; the runtime hand-off is broken.** First-inference compile completes in 25-41s and writes a working .mxr cache, but the post-compile MIGraphX runtime API then throws a null-pointer error and no audio is produced. See [What's actually broken on the AMD GPU path](#whats-actually-broken-on-the-amd-gpu-path). For v0.1.0, `CPUExecutionProvider` on AMD hardware is the recommended path (8.25s on Hinoki Ryzen 9700X — known-good audio output).
+6. **`migraphx_model_cache_dir` is the real cache option.** Older docs and 2025 forum posts mention `migraphx_save_compiled_model` / `migraphx_load_compiled_path` — **these are rejected by the Python bindings as of ORT 1.21+** ([microsoft/onnxruntime#25379](https://github.com/microsoft/onnxruntime/issues/25379)). Use `migraphx_model_cache_dir` (or env `ORT_MIGRAPHX_MODEL_CACHE_PATH`). The cache file is named `{migraphx_version_hex}-{graph_id}-{hash(gcnArchName)}-{hash(input_shapes)}.mxr`, so each `sequence_length` value gets its own cache entry.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `[kokoro] WARNING: requested provider=MIGraphXExecutionProvider but ONNX Runtime loaded CPUExecutionProvider` | AMD `onnxruntime-migraphx` wheel not installed, OR `onnxruntime` (CPU PyPI wheel) is co-installed and winning the import race | Uninstall both, then install only `onnxruntime-migraphx` (see [Quirks](#quirks-observed) #2). Verify with `import onnxruntime; print(onnxruntime.get_available_providers())` |
-| MIGraphX render hangs at >5 min wall-clock with no progress | First-time graph compile on Kokoro's encoder (`canEvalNodeArgument` warning earlier in the log) | Real perf wall, not a hang. See [Why MIGraphX is slow on Kokoro](#why-migraphx-is-slow-on-kokoro). For v0.1.0, fall back to `KOKORO_PROVIDER=CPUExecutionProvider`. |
+| MIGraphX render fails with `RUNTIME_EXCEPTION: ... Failed to call function` after ~30s | Post-compile null-pointer in `migraphx_program_parameter_shapes_size` — known novel issue on this stack. See [What's actually broken on the AMD GPU path](#whats-actually-broken-on-the-amd-gpu-path). | For v0.1.0, fall back to `KOKORO_PROVIDER=CPUExecutionProvider`. The GPU path is queued for v0.1.1 pending an AMD upstream fix. |
 | `rocminfo: command not found` | ROCm not installed | Follow the AMD Ubuntu install (this doc, §Setup) |
 | `rocminfo` runs but no GPU listed | User not in `render` and `video` groups | `sudo usermod -a -G render,video $USER` then log out/in |
 | Render hangs or crashes on first inference | Driver / ROCm version mismatch with `onnxruntime-rocm` wheel | Check ROCm version (`apt list --installed | grep rocm-core`) matches the wheel build (`onnxruntime-rocm` PyPI release notes); pin wheel version explicitly |
