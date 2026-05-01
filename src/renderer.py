@@ -660,9 +660,18 @@ def _render_segments_kokoro(
     voice_profiles: dict[str, dict[str, Any]],
     segments_dir: Path,
     indices: set[int] | None = None,
+    cache: Any = None,
 ) -> list[dict[str, Any]]:
-    """Render each segment as an individual WAV using Kokoro. Returns manifest entries."""
+    """Render each segment as an individual WAV using Kokoro. Returns manifest entries.
+
+    If ``cache`` is a :class:`src.segment_cache.SegmentCache`, segment
+    hashes are computed and the cache is consulted before invoking Kokoro.
+    Cache hits skip the TTS call entirely. Cache misses render and store.
+    """
     import numpy as np
+    import soundfile as sf
+
+    from src.segment_cache import compute_segment_hash
 
     sample_rate = config.renderer.sample_rate
     manifest_segments: list[dict[str, Any]] = []
@@ -682,14 +691,48 @@ def _render_segments_kokoro(
         if not text:
             continue
 
-        # Defer model load until we have a segment that actually needs it.
-        if kokoro is None:
-            kokoro, _ = get_kokoro()
-
         speaker_key = str(seg.get("speaker", "host_a"))
         register = str(seg.get("register", "baseline"))
         topic = str(seg.get("topic", ""))
         profile = _apply_register(voice_profiles.get(speaker_key, {}), register)
+
+        # Cache lookup (text post-tag-strip, profile post-register-merge —
+        # whatever Kokoro will actually consume).
+        segment_hash: str | None = None
+        cache_hit = False
+        if cache is not None:
+            segment_hash = compute_segment_hash(
+                text=text,
+                speaker=speaker_key,
+                register=register,
+                voice_profile=profile,
+                engine="kokoro",
+            )
+            dest = segments_dir / f"seg-{i:03d}-{speaker_key}.wav"
+            if cache.copy_to(segment_hash, dest):
+                cache_hit = True
+                cached_audio, _sr = sf.read(str(dest), dtype="float32")
+                duration = len(cached_audio) / sample_rate
+                print(f"  [{i + 1}/{total}] {speaker_key} (cached {segment_hash}): {text[:60]}...")
+                manifest_segments.append(
+                    {
+                        "index": i,
+                        "file": dest.name,
+                        "speaker": speaker_key,
+                        "register": register,
+                        "topic": topic,
+                        "word_count": len(text.split()),
+                        "duration_seconds": round(duration, 3),
+                        "segment_hash": segment_hash,
+                        "cache_hit": True,
+                    }
+                )
+                continue
+
+        # Cache miss (or no cache) — render through Kokoro.
+        if kokoro is None:
+            kokoro, _ = get_kokoro()
+
         kok = profile.get("kokoro", {})
         voice = _resolve_voice(kokoro, profile)
         speed = float(kok.get("speed", 1.0))
@@ -705,17 +748,23 @@ def _render_segments_kokoro(
         filename = _write_segment(audio_segment, i, speaker_key, segments_dir, sample_rate)
         duration = len(audio_segment) / sample_rate
 
-        manifest_segments.append(
-            {
-                "index": i,
-                "file": filename,
-                "speaker": speaker_key,
-                "register": register,
-                "topic": topic,
-                "word_count": len(text.split()),
-                "duration_seconds": round(duration, 3),
-            }
-        )
+        # Populate cache after successful render.
+        if cache is not None and segment_hash is not None:
+            cache.put(segment_hash, segments_dir / filename)
+
+        manifest_entry: dict[str, Any] = {
+            "index": i,
+            "file": filename,
+            "speaker": speaker_key,
+            "register": register,
+            "topic": topic,
+            "word_count": len(text.split()),
+            "duration_seconds": round(duration, 3),
+        }
+        if segment_hash is not None:
+            manifest_entry["segment_hash"] = segment_hash
+            manifest_entry["cache_hit"] = cache_hit  # always False here
+        manifest_segments.append(manifest_entry)
 
     return manifest_segments
 

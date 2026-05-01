@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -177,6 +178,25 @@ def _run_stages(
     except Exception as exc:
         print(f"ERROR in renderer: {exc}")
         return 1
+
+    # Stage 2.5: Anomaly detection (post-render, pre-quality, non-blocking)
+    try:
+        from src.anomaly import detect_anomalies
+
+        episode_dir = audio_path.parent
+        manifest_path = episode_dir / "manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            anomaly_report = detect_anomalies(manifest, per_segment_wer=[])
+            anomalies_path = episode_dir / "anomalies.json"
+            anomalies_path.write_text(json.dumps(anomaly_report.to_dict(), indent=2))
+            count = len(anomaly_report.anomalies)
+            if count == 0:
+                print("  Anomalies: 0 — clean render.")
+            else:
+                print(f"  Anomalies: {count} flagged — see {anomalies_path}")
+    except Exception as exc:  # noqa: BLE001 — anomaly stage is non-blocking
+        print(f"  WARNING: Anomaly detection failed: {exc}")
 
     # Stage 3: Quality evaluation
     report = None
