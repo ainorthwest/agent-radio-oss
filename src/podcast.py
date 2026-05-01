@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from pathlib import Path
@@ -32,8 +32,10 @@ import yaml
 # iTunes namespace — register so ElementTree uses "itunes:" prefix (not "ns0:")
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
+PODCAST_NS = "https://podcastindex.org/namespace/1.0"
 register_namespace("itunes", ITUNES_NS)
 register_namespace("content", CONTENT_NS)
+register_namespace("podcast", PODCAST_NS)
 
 
 @dataclass
@@ -50,6 +52,10 @@ class PodcastMetadata:
     category: str = "Technology"
     subcategory: str = "Tech News"
     explicit: bool = False
+    # Podcasting 2.0 person list — one entry per cast voice. Each item
+    # is a dict with keys: name (required), role (default "host"), img,
+    # href.  See https://podcasting2.org/docs/podcast-namespace/tags/person
+    persons: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -64,6 +70,10 @@ class EpisodeEntry:
     guid: str
     file_size_bytes: int = 0
     artwork_url: str | None = None
+    # Podcasting 2.0 — optional URLs for transcript + cloud chapters.
+    # When set, the corresponding podcast: tags are emitted on the item.
+    transcript_url: str | None = None
+    chapters_url: str | None = None
 
 
 def load_podcast_config(
@@ -135,6 +145,23 @@ def build_feed(metadata: PodcastMetadata, episodes: list[EpisodeEntry]) -> str:
         if metadata.subcategory:
             SubElement(cat, f"{{{ITUNES_NS}}}category", text=metadata.subcategory)
 
+    # Podcasting 2.0 — emit a "locked" tag at channel level so the
+    # namespace declaration appears even on feeds with no per-episode
+    # transcript/chapters tags. Locked=no is the safe default
+    # (allows operators to import the feed elsewhere without contacting
+    # us first); operators who want lockdown can change it post-fact.
+    SubElement(channel, f"{{{PODCAST_NS}}}locked").text = "no"
+
+    # Podcasting 2.0 channel-level person tags (one per cast voice).
+    for person in metadata.persons:
+        attrs = {"role": person.get("role", "host")}
+        if person.get("img"):
+            attrs["img"] = person["img"]
+        if person.get("href"):
+            attrs["href"] = person["href"]
+        person_el = SubElement(channel, f"{{{PODCAST_NS}}}person", attrs)
+        person_el.text = person.get("name", "")
+
     # Episode items (newest first)
     for ep in sorted(episodes, key=lambda e: e.pub_date, reverse=True):
         item = SubElement(channel, "item")
@@ -155,6 +182,23 @@ def build_feed(metadata: PodcastMetadata, episodes: list[EpisodeEntry]) -> str:
         SubElement(item, f"{{{ITUNES_NS}}}explicit").text = "yes" if metadata.explicit else "no"
         if ep.artwork_url:
             SubElement(item, f"{{{ITUNES_NS}}}image", href=ep.artwork_url)
+
+        # Podcasting 2.0 per-episode tags. Optional — emit only when set.
+        if ep.transcript_url:
+            SubElement(
+                item,
+                f"{{{PODCAST_NS}}}transcript",
+                url=ep.transcript_url,
+                type="application/x-subrip",
+                rel="captions",
+            )
+        if ep.chapters_url:
+            SubElement(
+                item,
+                f"{{{PODCAST_NS}}}chapters",
+                url=ep.chapters_url,
+                type="application/json+chapters",
+            )
 
     # Serialize with XML declaration
     xml_bytes = tostring(rss, encoding="unicode", xml_declaration=False)
