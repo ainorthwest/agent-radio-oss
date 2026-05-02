@@ -1279,9 +1279,7 @@ SETUP_CUDA_SH = SCRIPTS_DIR / "setup-cuda.sh"
 
 
 @pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
-def test_setup_cuda_refuses_without_nvidia_smi(
-    shell_runner: ShellRunner, tmp_path: Path
-) -> None:
+def test_setup_cuda_refuses_without_nvidia_smi(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """``setup-cuda.sh`` requires NVIDIA — refuses if nvidia-smi is absent."""
     for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
         shell_runner.stub(cmd, returncode=0)
@@ -1391,9 +1389,7 @@ def test_setup_cuda_emits_untested_banner(shell_runner: ShellRunner, tmp_path: P
 
 
 @pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
-def test_setup_cuda_writes_cuda_provider_in_env(
-    shell_runner: ShellRunner, tmp_path: Path
-) -> None:
+def test_setup_cuda_writes_cuda_provider_in_env(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """The .env.suggested file sets KOKORO_PROVIDER=CUDAExecutionProvider."""
     for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
         shell_runner.stub(cmd, returncode=0)
