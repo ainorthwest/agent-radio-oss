@@ -6,13 +6,13 @@ This directory documents what we have actually verified, on actual hardware, wit
 
 ## Quick pick by hardware
 
-| You have | Read this |
-|---|---|
-| AMD Radeon (any RDNA generation) | [`amd-rocm.md`](./amd-rocm.md) |
-| Mac with M1 / M2 / M3 / M4 | [`apple-silicon.md`](./apple-silicon.md) |
-| CPU only (Intel laptop, Linux server, Docker) | [`cpu.md`](./cpu.md) |
-| NVIDIA GPU | _Day 5+ — `setup-cuda.sh` ships the install path; verified bring-up deferred to long plan_ |
-| Windows + DirectML | _not yet validated; the engine accepts `DmlExecutionProvider`, but no Day 2 evidence_ |
+| You have | Read this | Status |
+|---|---|---|
+| AMD Radeon (any RDNA generation) | [`amd-rocm.md`](./amd-rocm.md) | ✓ verified Day 2 |
+| Mac with M1 / M2 / M3 / M4 | [`apple-silicon.md`](./apple-silicon.md) | ✓ verified Day 2 |
+| CPU only (Intel laptop, Linux server, Docker) | [`cpu.md`](./cpu.md) | ✓ verified Day 2 |
+| NVIDIA GPU | [`nvidia-cuda.md`](./nvidia-cuda.md) | ⚠ **untested in v0.1.0** — `setup-cuda.sh` ships blind |
+| Windows + DirectML | _not yet validated; the engine accepts `DmlExecutionProvider`, but no Day 2 evidence_ | — |
 
 ## How we picked the providers we ship
 

@@ -1272,6 +1272,208 @@ def test_setup_amd_uninstalls_onnxruntime_before_install(
 
 
 # ---------------------------------------------------------------------------
+# scripts/setup-cuda.sh — NVIDIA path (ships blind in v0.1.0)
+# ---------------------------------------------------------------------------
+
+SETUP_CUDA_SH = SCRIPTS_DIR / "setup-cuda.sh"
+
+
+@pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
+def test_setup_cuda_refuses_without_nvidia_smi(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """``setup-cuda.sh`` requires NVIDIA — refuses if nvidia-smi is absent."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+    # NB: deliberately no `nvidia-smi` stub.
+
+    result = shell_runner.run(
+        str(SETUP_CUDA_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cpu"}),
+    )
+
+    assert result.returncode != 0, "setup-cuda.sh must refuse without nvidia-smi"
+    combined = result.stdout + result.stderr
+    assert "nvidia" in combined.lower() or "cuda" in combined.lower()
+
+
+@pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
+def test_setup_cuda_refuses_when_platform_override_says_cuda_but_binary_missing(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """Companion to test_setup_cuda_refuses_without_nvidia_smi.
+
+    The previous test sets ``RADIO_PLATFORM_OVERRIDE=linux-cpu`` so the
+    refusal happens at the platform-guard branch — the ``require_cmd
+    nvidia-smi`` fallback is never exercised. This test sets the
+    override to ``linux-cuda`` (bypassing autodetect entirely), omits
+    the nvidia-smi stub, and asserts the require_cmd guard fires.
+    Important on headless hosts where someone installed CUDA headers
+    but not the driver tools.
+    """
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+    # NB: deliberately no nvidia-smi stub — we want the require_cmd path.
+
+    result = shell_runner.run(
+        str(SETUP_CUDA_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cuda"}),
+    )
+
+    assert result.returncode != 0, (
+        "require_cmd nvidia-smi must fire when platform-override forces "
+        "linux-cuda but the binary is absent"
+    )
+    combined = result.stdout + result.stderr
+    assert "nvidia-smi" in combined.lower()
+
+
+@pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
+def test_setup_cuda_emits_untested_banner(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """The script must print a prominent UNTESTED warning at start AND end.
+
+    Per the sprint plan, setup-cuda.sh ships blind in v0.1.0 (no NVIDIA
+    hardware to validate against this sprint). The banner is the
+    operator-facing acknowledgement that the script is best-effort
+    scaffolding rather than a verified install path. When NVIDIA hardware
+    becomes available, only real-mode validation flips on.
+    """
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    nvidia_stub = tmp_path / "_stubs_bin" / "nvidia-smi"
+    nvidia_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "NVIDIA-SMI 550.00.00"\n'
+        "exit 0\n"
+    )
+    nvidia_stub.chmod(0o755)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    result = shell_runner.run(
+        str(SETUP_CUDA_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cuda"}),
+    )
+
+    combined = result.stdout + result.stderr
+    untested_count = combined.lower().count("untested")
+    assert untested_count >= 2, (
+        f"banner must appear at start AND end of run; saw {untested_count} occurrences\n"
+        f"output: {combined}"
+    )
+
+
+@pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
+def test_setup_cuda_writes_cuda_provider_in_env(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """The .env.suggested file sets KOKORO_PROVIDER=CUDAExecutionProvider."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    nvidia_stub = tmp_path / "_stubs_bin" / "nvidia-smi"
+    nvidia_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "NVIDIA-SMI 550.00.00"\n'
+        "exit 0\n"
+    )
+    nvidia_stub.chmod(0o755)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_CUDA_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cuda"}),
+        cwd=workdir,
+    )
+
+    assert result.returncode == 0, (
+        f"setup-cuda mock run should succeed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    env_suggested = workdir / ".env.suggested"
+    assert env_suggested.exists()
+    assert "KOKORO_PROVIDER=CUDAExecutionProvider" in env_suggested.read_text()
+
+
+@pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
+def test_setup_cuda_whisper_build_uses_cuda(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """The whisper.cpp cmake invocation must include -DGGML_CUDA=ON."""
+    for cmd in ("uv", "cmake", "make", "curl", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    shell_runner.stub("git", returncode=0)
+    nvidia_stub = tmp_path / "_stubs_bin" / "nvidia-smi"
+    nvidia_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "NVIDIA-SMI 550.00.00"\n'
+        "exit 0\n"
+    )
+    nvidia_stub.chmod(0o755)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_CUDA_SH),
+        args=["--skip-models", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cuda"}),
+        cwd=workdir,
+    )
+
+    cmake_calls = [c for c in result.calls if c[0].endswith("/cmake")]
+    cuda_call = next(
+        (c for c in cmake_calls if any("GGML_CUDA=ON" in arg for arg in c)),
+        None,
+    )
+    assert cuda_call is not None, (
+        f"setup-cuda must invoke cmake with -DGGML_CUDA=ON; cmake_calls={cmake_calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # scripts/oss-smoke.sh — universal smoke test
 # ---------------------------------------------------------------------------
 
