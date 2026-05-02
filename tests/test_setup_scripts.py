@@ -1588,3 +1588,81 @@ def test_radio_example_yaml_loads_into_radioconfig(monkeypatch: pytest.MonkeyPat
     assert config.renderer.engine
     # Voices block must include at least one named profile.
     assert len(config.voices) > 0
+
+
+# ── Day 7: ffmpeg auto-install on Linux ──────────────────────────────────────
+# `docker run ubuntu:24.04` lacks ffmpeg; setup-cpu.sh must install it
+# automatically on Linux so the fresh-clone path works inside a minimal
+# container. macOS users keep their brew workflow.
+
+
+def _ffmpeg_probe_body(extra_setup: str = "") -> str:
+    """Probe body that exercises the helper as if ffmpeg were missing.
+
+    Linux CI runners install ffmpeg explicitly for the audio-processing
+    tests, and macOS dev boxes commonly have it via brew, so trying to
+    hide it via PATH gymnastics is fragile. The helper exposes
+    ``RADIO_TEST_PRETEND_FFMPEG_MISSING=1`` as a deliberate test seam
+    that short-circuits the early ``command -v ffmpeg`` success check
+    so the install-path branches can be exercised cleanly.
+    """
+    return (
+        "# Force the helper to take its install-path branches as if ffmpeg were absent.\n"
+        "export RADIO_TEST_PRETEND_FFMPEG_MISSING=1\n"
+        f"{extra_setup}"
+        "if radio::ensure_pkg_ffmpeg; then echo RC=0; else echo RC=$?; fi\n"
+    )
+
+
+@pytest.mark.skipif(not COMMON_SH.exists(), reason="scripts/lib/common.sh not yet created")
+def test_ensure_pkg_ffmpeg_no_op_on_macos(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """On macOS, ensure_pkg_ffmpeg returns non-zero without invoking apt-get.
+
+    macOS operators install ffmpeg via brew. The helper must defer to the
+    existing require_cmd remedy on Darwin so we don't surprise brew users.
+    """
+    # Stub uname -s -> Darwin so the kernel branch picks the no-op path.
+    shell_runner.stub("uname", returncode=0, stdout="Darwin\n")
+    # Stub apt-get to prove it is NOT called.
+    shell_runner.stub("apt-get", returncode=0, stdout="should-not-run\n")
+
+    probe = tmp_path / "probe.sh"
+    probe.write_text(_common_sh_probe(_ffmpeg_probe_body()))
+    probe.chmod(0o755)
+    result = shell_runner.run(str(probe))
+
+    assert "RC=1" in result.stdout, (
+        f"macOS path must return non-zero:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    # apt-get must not appear in the recorded invocations
+    apt_calls = [c for c in result.calls if c and c[0].endswith("/apt-get")]
+    assert apt_calls == [], f"apt-get should not run on Darwin, got: {apt_calls}"
+
+
+@pytest.mark.skipif(not COMMON_SH.exists(), reason="scripts/lib/common.sh not yet created")
+def test_ensure_pkg_ffmpeg_invokes_apt_on_linux_root(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """When ffmpeg is missing on Linux + root, the helper invokes the package manager.
+
+    The Day 7 Docker baseline runs as root inside the container; this is
+    the load-bearing path that closes the dogfood gap.
+    """
+    # Stub uname -> Linux.
+    shell_runner.stub("uname", returncode=0, stdout="Linux\n")
+    # apt-get exists on PATH; ffmpeg does NOT (see _ffmpeg_probe_body).
+    shell_runner.stub("apt-get", returncode=0, stdout="installed-fake\n")
+
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        _common_sh_probe(_ffmpeg_probe_body("export EUID_OVERRIDE=0\nexport RADIO_DRY_RUN=1\n"))
+    )
+    probe.chmod(0o755)
+    result = shell_runner.run(str(probe))
+    combined = result.stdout + result.stderr
+
+    assert "RC=0" in result.stdout, f"linux root dry-run should succeed:\n{combined}"
+    # The dry-run logs the command it would run; assert apt-get install ffmpeg appears.
+    assert "apt-get install -y ffmpeg" in combined, (
+        f"expected apt-get install ffmpeg in dry-run output:\n{combined}"
+    )

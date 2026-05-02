@@ -179,6 +179,93 @@ radio::require_cmd() {
   radio::status_fail "required command not found: $name" --remedy "$remedy"
 }
 
+# radio::ensure_pkg_ffmpeg
+#   Ensures `ffmpeg` is on PATH on Linux. If absent, detects the local
+#   package manager (apt-get / dnf / pacman / apk) and installs ffmpeg —
+#   directly when running as root, or via `sudo -n` (passwordless sudo
+#   only) otherwise. On macOS this function is a no-op (brew users handle
+#   ffmpeg themselves; the existing `require_cmd ffmpeg` covers them).
+#
+#   The Day 7 Docker baseline (`docker run ubuntu:24.04`) lacks ffmpeg by
+#   default; setup-cpu.sh calls this helper before `require_cmd ffmpeg`
+#   so the install completes inside a fresh minimal container without an
+#   operator footgun.
+#
+#   Honors RADIO_DRY_RUN=1 (logs the install command without executing)
+#   and RADIO_NO_NETWORK=1 (skips silently — let the require_cmd remedy
+#   surface to the operator).
+#
+#   Returns 0 if ffmpeg is on PATH after the call (or already was), 1 if
+#   the install failed or was skipped without success. Callers should
+#   still follow this with `radio::require_cmd ffmpeg` to surface the
+#   actionable remedy on failure.
+radio::ensure_pkg_ffmpeg() {
+  # Test seam: pretend ffmpeg is absent without touching the host's PATH.
+  # The shell-test harness on Linux CI runners has /usr/bin/ffmpeg installed
+  # (CI deliberately installs it for the audio-processing tests), so the
+  # path-pinning trick we use elsewhere doesn't reliably hide it. Honoring
+  # this env var lets the test exercise the install-path branches cleanly.
+  if [ "${RADIO_TEST_PRETEND_FFMPEG_MISSING:-}" != "1" ] \
+    && command -v ffmpeg >/dev/null 2>&1; then
+    return 0
+  fi
+  local kernel
+  kernel="$(uname -s 2>/dev/null || echo unknown)"
+  if [ "$kernel" != "Linux" ]; then
+    # macOS / other — let require_cmd surface the brew remedy.
+    return 1
+  fi
+  if [ "${RADIO_NO_NETWORK:-}" = "1" ]; then
+    radio::log_warn "ffmpeg missing and RADIO_NO_NETWORK=1 — skipping auto-install"
+    return 1
+  fi
+
+  local mgr=""
+  local install_cmd=""
+  if command -v apt-get >/dev/null 2>&1; then
+    mgr="apt-get"
+    install_cmd="apt-get update && apt-get install -y ffmpeg"
+  elif command -v dnf >/dev/null 2>&1; then
+    mgr="dnf"
+    install_cmd="dnf install -y ffmpeg"
+  elif command -v pacman >/dev/null 2>&1; then
+    mgr="pacman"
+    install_cmd="pacman -S --noconfirm ffmpeg"
+  elif command -v apk >/dev/null 2>&1; then
+    mgr="apk"
+    install_cmd="apk add --no-cache ffmpeg"
+  else
+    radio::log_warn "ffmpeg missing and no supported Linux package manager found (apt-get/dnf/pacman/apk)"
+    return 1
+  fi
+
+  local euid="${EUID_OVERRIDE:-${EUID:-1000}}"
+  local prefix=""
+  if [ "$euid" = "0" ]; then
+    prefix=""
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    prefix="sudo "
+  else
+    radio::log_warn "ffmpeg missing — auto-install needs root or passwordless sudo (manager: $mgr)"
+    return 1
+  fi
+
+  radio::log_info "installing ffmpeg via $mgr"
+  if [ "${RADIO_DRY_RUN:-}" = "1" ]; then
+    printf '%s[dry-run]%s would run: %s%s\n' \
+      "${_RADIO_C_DIM}" "${_RADIO_C_RESET}" "$prefix" "$install_cmd" >&2
+    return 0
+  fi
+  if bash -c "$prefix$install_cmd" >&2; then
+    if command -v ffmpeg >/dev/null 2>&1; then
+      radio::status_ok "ffmpeg installed via $mgr"
+      return 0
+    fi
+  fi
+  radio::log_warn "ffmpeg auto-install via $mgr did not succeed"
+  return 1
+}
+
 # radio::python_version_ok
 #   Returns 0 if `python3` is >=3.11, 1 otherwise.
 radio::python_version_ok() {

@@ -461,19 +461,22 @@ class TestIntelligibility:
     """Tests for Pillar 3 — intelligibility scoring (WER/CER)."""
 
     def test_empty_script_text_returns_sentinel(self, speech_like_audio: Path):
-        """Empty script text should return -1 sentinel values."""
+        """Empty script text should return -1 sentinel values and an explicit skip surface."""
         results = _compute_intelligibility(speech_like_audio, "")
         assert results["wer"] == -1.0
         assert results["cer"] == -1.0
+        assert results["wer_skipped"] is True
+        assert "no script text" in results["wer_skip_reason"]
 
     def test_none_like_script_returns_sentinel(self, speech_like_audio: Path):
-        """Whitespace-only script should return -1 sentinel values."""
+        """Whitespace-only script should return -1 sentinel values and an explicit skip surface."""
         results = _compute_intelligibility(speech_like_audio, "   ")
         assert results["wer"] == -1.0
         assert results["cer"] == -1.0
+        assert results["wer_skipped"] is True
 
     def test_missing_whisper_binary_returns_sentinel(self, speech_like_audio: Path, monkeypatch):
-        """When whisper.cpp binary is missing, should return -1 sentinel values."""
+        """When whisper.cpp binary is missing, should return -1 sentinel values plus a named skip reason."""
         from src.stt import WhisperUnavailableError
 
         def fake_transcribe(audio_path):
@@ -483,14 +486,35 @@ class TestIntelligibility:
         results = _compute_intelligibility(speech_like_audio, "Hello world")
         assert results["wer"] == -1.0
         assert results["cer"] == -1.0
+        assert results["wer_skipped"] is True
+        # Reason text must be specific enough that an agent can pattern-match
+        # on "whisper.cpp binary not available" without parsing tracebacks.
+        assert "whisper.cpp binary not available" in results["wer_skip_reason"]
+        assert "binary missing" in results["wer_skip_reason"]
+
+    def test_whisper_transcription_failure_surfaces_skip(
+        self, speech_like_audio: Path, monkeypatch
+    ):
+        """A WhisperError during transcription should surface as a skip with the underlying reason."""
+        from src.stt import WhisperError
+
+        def fake_transcribe(audio_path):
+            raise WhisperError("non-zero exit code from whisper-cli")
+
+        monkeypatch.setattr("src.stt.transcribe", fake_transcribe)
+        results = _compute_intelligibility(speech_like_audio, "Hello world")
+        assert results["wer_skipped"] is True
+        assert "transcription failed" in results["wer_skip_reason"]
 
     def test_whisper_cpp_round_trip_computes_wer(self, speech_like_audio: Path, monkeypatch):
-        """When whisper.cpp succeeds, _compute_intelligibility should compute WER from the transcript."""
+        """When whisper.cpp succeeds, _compute_intelligibility should compute WER and report no skip."""
         # Whisper returns the exact reference text → WER == 0.0
         monkeypatch.setattr("src.stt.transcribe", lambda audio_path: "Hello world")
         results = _compute_intelligibility(speech_like_audio, "Hello world")
         assert results["wer"] == 0.0
         assert results["cer"] == 0.0
+        assert results["wer_skipped"] is False
+        assert results["wer_skip_reason"] == ""
 
     def test_wer_flagging_in_standalone_scoring(self):
         """High WER should produce warning notes in standalone scoring."""
@@ -506,6 +530,23 @@ class TestIntelligibility:
         wer_notes = [n for n in notes if "WER" in n]
         assert len(wer_notes) == 1
         assert "high" in wer_notes[0].lower() or "review" in wer_notes[0].lower()
+
+    def test_pillar3_skip_surfaces_in_standalone_notes(self):
+        """When wer_skipped is true, standalone scoring should explain the skip in notes."""
+        features = {
+            "lufs_approx": -16.0,
+            "silence_ratio": 0.10,
+            "spectral_centroid_mean": 2500.0,
+            "pitch_variance": 500.0,
+            "dynamic_range_db": 20.0,
+            "wer": -1.0,
+            "wer_skipped": True,
+            "wer_skip_reason": "whisper.cpp binary not available: not on PATH",
+        }
+        _, notes = _score_standalone(features)
+        skip_notes = [n for n in notes if "Pillar 3" in n and "skipped" in n]
+        assert len(skip_notes) == 1
+        assert "whisper.cpp" in skip_notes[0]
 
     def test_severe_wer_flagging(self):
         """Very high WER (>0.30) should flag as severe."""

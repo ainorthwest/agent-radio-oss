@@ -319,3 +319,63 @@ class TestPipelineDataQualityFixes:
         assert ep.mean_wer is None
         assert ep.speaker_scores == {}
         assert ep.chemistry_score == 0.0
+
+
+class TestPipelineErrorMessages:
+    """Tests for Day 7 AX polish: friendlier failures on novel-situation paths."""
+
+    def test_corrupt_script_json_returns_named_error(self, tmp_path, capsys):
+        """A malformed script.json must surface a JSONDecodeError remedy + non-zero rc.
+
+        Before Day 7 the JSON load was nested inside the script-quality try, so a
+        corrupt file masqueraded as a "Script evaluation failed" warning and the
+        pipeline tried to render anyway. The remedy must name the file path and
+        the line/column so an operator (or agent harness) can act without
+        reading a stack trace.
+        """
+        from src.pipeline import run
+
+        # Minimal config + corrupt override script. We use script_override to
+        # bypass the curator entirely and isolate the JSON-load failure path.
+        config_path = tmp_path / "radio.yaml"
+        config_path.write_text("library:\n  root: lib\nsecrets:\n  openrouter_api_key_env: NOPE\n")
+        bad_script = tmp_path / "broken-script.json"
+        bad_script.write_text('{"segments": [unclosed')
+
+        rc = run(
+            config_path=str(config_path),
+            dry_run=True,
+            script_override=bad_script,
+            date_override="2026-05-02",
+        )
+        assert rc == 1
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "invalid JSON" in combined
+        assert "Re-run the curator stage" in combined
+        # Path of the corrupt file must be named so the operator can find it.
+        assert "script.json" in combined
+
+    def test_curator_exception_includes_class_name(self, tmp_path, capsys, monkeypatch):
+        """When the curator raises, the error line must include the exception class name.
+
+        Agent harnesses pattern-match on `[ConnectionError]` / `[TimeoutError]` /
+        etc. without parsing prose. Before Day 7 the format was
+        `ERROR in curator: {exc}` with no class, which was opaque.
+        """
+        from src.pipeline import run
+
+        config_path = tmp_path / "radio.yaml"
+        config_path.write_text("library:\n  root: lib\nsecrets:\n  openrouter_api_key_env: NOPE\n")
+
+        def fake_curate(*_args, **_kwargs):
+            raise ConnectionError("openrouter.ai resolved to nothing")
+
+        monkeypatch.setattr("src.curator.curate", fake_curate)
+
+        rc = run(config_path=str(config_path), dry_run=True, date_override="2026-05-02")
+        assert rc == 1
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "[ConnectionError]" in combined
+        assert "openrouter.ai resolved to nothing" in combined

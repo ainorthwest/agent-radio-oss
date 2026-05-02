@@ -107,9 +107,13 @@ class QualityReport:
     srmr: float = 0.0  # Speech Reverberation Modulation Energy Ratio (higher = drier)
     pesq: float = 0.0  # PESQ score (1-5, reference-based, 0 if unavailable)
     stoi: float = 0.0  # STOI score (0-1, reference-based, 0 if unavailable)
-    # Intelligibility (mlx-whisper + jiwer) — Pillar 3
+    # Intelligibility (whisper.cpp + jiwer) — Pillar 3
     wer: float = -1.0  # Word Error Rate (0=perfect, 1=all wrong, -1=not computed)
     cer: float = -1.0  # Character Error Rate (0=perfect, 1=all wrong, -1=not computed)
+    # Pillar 3 explicit-skip surface — agents and operators read these directly
+    # instead of inferring from a -1.0 sentinel. Empty string means Pillar 3 ran.
+    wer_skipped: bool = False
+    wer_skip_reason: str = ""
     # Artifact detection — TTS failure modes
     artifact_count: int = 0  # Total detected artifacts (clipping + spikes + repetitions)
     clipping_frames: int = 0  # Consecutive-sample clipping events
@@ -578,7 +582,7 @@ def _compute_perceived_quality(
     return results
 
 
-def _compute_intelligibility(audio_path: Path, script_text: str) -> dict[str, float]:
+def _compute_intelligibility(audio_path: Path, script_text: str) -> dict[str, Any]:
     """Pillar 3: Whisper round-trip intelligibility scoring.
 
     Routes transcription through :mod:`src.stt` (whisper.cpp). The reference
@@ -586,33 +590,49 @@ def _compute_intelligibility(audio_path: Path, script_text: str) -> dict[str, fl
     (lowercase, bracket tags + punctuation stripped), so callers can pass
     the raw script text including ``[laugh]`` / ``(sighs)`` tags.
 
-    Returns dict with ``wer`` and ``cer`` keys. Values are ``-1.0`` if the
-    whisper binary is unavailable or transcription fails.
+    Returns a dict with ``wer`` / ``cer`` (``-1.0`` if not computed) and
+    ``wer_skipped`` / ``wer_skip_reason`` so downstream consumers can tell
+    "Pillar 3 ran and the score was -1.0" from "Pillar 3 was skipped." The
+    sentinel ``-1.0`` was previously the only signal; agents and operators
+    now read the explicit skip surface instead of inferring.
     """
     from src import stt
 
-    results: dict[str, float] = {"wer": -1.0, "cer": -1.0}
+    results: dict[str, Any] = {
+        "wer": -1.0,
+        "cer": -1.0,
+        "wer_skipped": False,
+        "wer_skip_reason": "",
+    }
 
     if not script_text or not script_text.strip():
+        results["wer_skipped"] = True
+        results["wer_skip_reason"] = "no script text provided"
         return results
 
     try:
         hypothesis = stt.transcribe(audio_path)
     except stt.WhisperUnavailableError as e:
-        print(
-            f"[quality] whisper.cpp binary not available — WER/CER disabled. {e}",
-            file=sys.stderr,
-        )
+        msg = f"whisper.cpp binary not available: {e}"
+        print(f"[quality] {msg} — Pillar 3 (WER/CER) disabled.", file=sys.stderr)
+        results["wer_skipped"] = True
+        results["wer_skip_reason"] = msg
         return results
     except stt.WhisperError as e:
-        print(f"[quality] whisper.cpp transcription failed: {e}", file=sys.stderr)
+        msg = f"whisper.cpp transcription failed: {e}"
+        print(f"[quality] {msg}", file=sys.stderr)
+        results["wer_skipped"] = True
+        results["wer_skip_reason"] = msg
         return results
     except Exception as e:  # noqa: BLE001 — defensive against subprocess weirdness
-        print(f"[quality] whisper.cpp unexpected error: {e}", file=sys.stderr)
+        msg = f"whisper.cpp unexpected error: {e}"
+        print(f"[quality] {msg}", file=sys.stderr)
+        results["wer_skipped"] = True
+        results["wer_skip_reason"] = msg
         return results
 
     if not hypothesis.strip():
-        # Whisper returned empty — treat as total failure
+        # Whisper returned empty — treat as total failure (not a skip).
         results["wer"] = 1.0
         results["cer"] = 1.0
         return results
@@ -621,7 +641,10 @@ def _compute_intelligibility(audio_path: Path, script_text: str) -> dict[str, fl
         results["wer"] = round(stt.wer(script_text, hypothesis), 4)
         results["cer"] = round(stt.cer(script_text, hypothesis), 4)
     except Exception as e:  # noqa: BLE001
-        print(f"[quality] WER/CER scoring failed: {e}", file=sys.stderr)
+        msg = f"WER/CER scoring failed: {e}"
+        print(f"[quality] {msg}", file=sys.stderr)
+        results["wer_skipped"] = True
+        results["wer_skip_reason"] = msg
 
     return results
 
@@ -835,9 +858,14 @@ def _score_standalone(features: dict[str, Any]) -> tuple[float, list[str]]:
             notes.append(f"SRMR {srmr_val:.1f} — very dry (good for podcast)")
 
     # ── Intelligibility (Pillar 3) ─────────────────────────────────────────
-    # WER flagging — high error rate means TTS garbled the text
+    # WER flagging — high error rate means TTS garbled the text. When Pillar 3
+    # was skipped (whisper.cpp missing, etc.) say so explicitly so an agent or
+    # operator never has to interpret the -1.0 sentinel.
     wer_val = features.get("wer", -1.0)
-    if wer_val >= 0:
+    if features.get("wer_skipped"):
+        skip_reason = features.get("wer_skip_reason") or "unknown reason"
+        notes.append(f"Pillar 3 (WER/CER) skipped — {skip_reason}")
+    elif wer_val >= 0:
         if wer_val > 0.30:
             notes.append(f"WER {wer_val:.2f} — severe: TTS garbled the text, flag for re-render")
         elif wer_val > 0.15:
@@ -993,6 +1021,8 @@ def evaluate(
         stoi=round(features.get("stoi", 0.0), 4),
         wer=round(features.get("wer", -1.0), 4),
         cer=round(features.get("cer", -1.0), 4),
+        wer_skipped=bool(features.get("wer_skipped", False)),
+        wer_skip_reason=str(features.get("wer_skip_reason", "")),
         artifact_count=int(features.get("artifact_count", 0)),
         clipping_frames=int(features.get("clipping_frames", 0)),
         spectral_spikes=int(features.get("spectral_spikes", 0)),

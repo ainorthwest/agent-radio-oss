@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `agent-radio-oss` is the **open distribution** of [Agent Radio](https://github.com/ainorthwest/agent-radio). It is a hardware-agnostic, commercially-deployable subset of the production stack — Apache 2.0 throughout. The proprietary `agent-radio` repo holds MLX engines, Steward/Bard agents, and CC-BY-NC music weights that cannot ship in OSS.
 
-**Status:** active sprint toward `v0.1.0-mvp`. See `oss-mvp-sprint.md` for the day-by-day plan, the locked engine choices, the explicit "what we are NOT doing" list, and the autonomous-station thesis. Re-read that file before adding scope.
+**Status:** `v0.1.0` shipped 2026-05-02 (git tag `v0.1.0-mvp`). **Current Phase:** post-MVP stabilization → v0.1.1 planning. See [`CHANGELOG.md`](./CHANGELOG.md) for what landed and what's deferred. The 7-day sprint plan in `oss-mvp-sprint.md` is preserved as historical record — the daily log there is the single source of truth for what each day actually shipped. Re-read the bifurcation rule below before adding scope.
 
 **The bifurcation rule:** the test is *commercial deployability* and *AINW-specificity*, not "anything that smells like an agent."
 
