@@ -1307,6 +1307,46 @@ def test_setup_cuda_refuses_without_nvidia_smi(
 
 
 @pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
+def test_setup_cuda_refuses_when_platform_override_says_cuda_but_binary_missing(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """Companion to test_setup_cuda_refuses_without_nvidia_smi.
+
+    The previous test sets ``RADIO_PLATFORM_OVERRIDE=linux-cpu`` so the
+    refusal happens at the platform-guard branch — the ``require_cmd
+    nvidia-smi`` fallback is never exercised. This test sets the
+    override to ``linux-cuda`` (bypassing autodetect entirely), omits
+    the nvidia-smi stub, and asserts the require_cmd guard fires.
+    Important on headless hosts where someone installed CUDA headers
+    but not the driver tools.
+    """
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+    # NB: deliberately no nvidia-smi stub — we want the require_cmd path.
+
+    result = shell_runner.run(
+        str(SETUP_CUDA_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cuda"}),
+    )
+
+    assert result.returncode != 0, (
+        "require_cmd nvidia-smi must fire when platform-override forces "
+        "linux-cuda but the binary is absent"
+    )
+    combined = result.stdout + result.stderr
+    assert "nvidia-smi" in combined.lower()
+
+
+@pytest.mark.skipif(not SETUP_CUDA_SH.exists(), reason="scripts/setup-cuda.sh not yet created")
 def test_setup_cuda_emits_untested_banner(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """The script must print a prominent UNTESTED warning at start AND end.
 

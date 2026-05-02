@@ -199,7 +199,9 @@ if [ "${RADIO_DRY_RUN:-}" = "1" ]; then
 else
   cat >"$ENV_FILE" <<'ENVEOF'
 # Suggested env vars for agent-radio-oss on NVIDIA CUDA.
-# Source this file or copy into .env to use.
+# Source this file from the repo root (where you ran setup-cuda.sh).
+# The `$(pwd)` expressions below resolve at source-time, so sourcing
+# from a different directory will produce wrong paths.
 #
 # UNTESTED IN v0.1.0 — if you're the first contributor on this path,
 # please open an issue with your hardware + driver versions + outcome.

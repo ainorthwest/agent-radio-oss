@@ -149,7 +149,9 @@ if [ "${RADIO_DRY_RUN:-}" = "1" ]; then
 else
   cat >"$ENV_FILE" <<'ENVEOF'
 # Suggested env vars for agent-radio-oss on CPU.
-# Source this file or copy into .env to use.
+# Source this file from the repo root (where you ran setup-cpu.sh).
+# The `$(pwd)` expressions below resolve at source-time, so sourcing
+# from a different directory will produce wrong paths.
 
 # ONNX Runtime provider for Kokoro TTS. CPU is the universal baseline.
 export KOKORO_PROVIDER=CPUExecutionProvider

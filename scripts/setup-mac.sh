@@ -164,7 +164,9 @@ if [ "${RADIO_DRY_RUN:-}" = "1" ]; then
 else
   cat >"$ENV_FILE" <<'ENVEOF'
 # Suggested env vars for agent-radio-oss on Apple Silicon.
-# Source this file or copy into .env to use.
+# Source this file from the repo root (where you ran setup-mac.sh).
+# The `$(pwd)` expressions below resolve at source-time, so sourcing
+# from a different directory will produce wrong paths.
 
 # ONNX Runtime provider for Kokoro TTS. CoreML is the Apple Silicon GPU/ANE path.
 export KOKORO_PROVIDER=CoreMLExecutionProvider
