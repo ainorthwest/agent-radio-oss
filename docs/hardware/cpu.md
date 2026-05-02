@@ -2,6 +2,16 @@
 
 CPU is `agent-radio-oss`'s **universal baseline**. Every supported platform must produce the same audio on `KOKORO_PROVIDER=CPUExecutionProvider`. If the GPU path is broken on your hardware, CPU is always available as a fallback. If a contributor's parity numbers come in suspicious, the CPU baseline is the reference everyone else gets compared against.
 
+## One-shot install
+
+```bash
+bash scripts/setup-cpu.sh
+```
+
+That handles `uv sync`, the whisper.cpp build, model downloads, writes `.env.suggested`, and runs a smoke check. After the script completes, `uv run radio demo` produces a Haystack News episode end-to-end.
+
+The sections below document what the script does so operators can reproduce it by hand or troubleshoot a partial install.
+
 ## When to use
 
 - **Any environment without a GPU.** Pure server installs, Docker without `--gpus`, CI runners, low-end laptops.
