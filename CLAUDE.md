@@ -185,6 +185,16 @@ The OSS CLI deliberately drops `edit`, `eval`, `music`, `viz`, `wire`, `write` f
 
 `pyproject.toml` runs `--strict` globally, then loosens specific modules that wrap numpy/scipy/torch (`src.dsp`, `src.mixer`, `src.library`, `src.distributor`, `src.stream`, `src.quality`, `src.renderer`, `src.pipeline`, `src.engines.kokoro`) and the Typer-decorated CLI. New non-numerical code should hold the strict line. If you add a new wrapper around a numerics library, prefer fixing types over adding the module to the override list.
 
+### Shell scripts
+
+Day 5 introduces `scripts/` as a first-class surface — setup scripts, smoke tests, model downloaders. Three rules:
+
+1. **Every script starts** with `#!/usr/bin/env bash` and `set -euo pipefail` in the first ten lines. The discovery test in `tests/test_setup_scripts.py` enforces this — there is no allowlist, every new `scripts/*.sh` is auto-checked.
+2. **shellcheck and shfmt run** in pre-commit and CI, scoped to `^scripts/.*\.sh$`. Local dev: `pre-commit run --all-files` or `shellcheck -x -S warning scripts/**/*.sh && shfmt -i 2 -ci -bn -d scripts/**/*.sh`.
+3. **Tests use a three-tier pattern.** Tier 1 (static — shellcheck) and Tier 2 (mock — `shell_runner` fixture, runs the script for real with stub-PATH external commands) run in CI. Tier 3 (real, env-gated by `RADIO_RUN_REAL_SETUP=1`) is operator-run per host. The fixture lives in `tests/conftest.py`; see `tests/test_setup_scripts.py` for usage.
+
+Sourced helpers go in `scripts/lib/`. They don't need a shebang but still require `set -euo pipefail`.
+
 ## Working in this repo
 
 - **Read `oss-mvp-sprint.md` first** for any non-trivial change. The sprint plan is the source of truth for scope and "not now" decisions. The "what we are NOT doing" list AND the autonomous-station thesis are both load-bearing.

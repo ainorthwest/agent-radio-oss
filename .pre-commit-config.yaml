@@ -25,3 +25,22 @@ repos:
     rev: v8.30.0
     hooks:
       - id: gitleaks
+
+  # Shell-script linting — Day 5 introduces scripts/ as a first-class
+  # surface (setup scripts, smoke test, model downloader). shellcheck
+  # catches unquoted vars / typos / unsafe patterns; shfmt enforces a
+  # single house style. Both scoped to scripts/ so we don't lint the
+  # whisper.cpp submodule's vendor scripts.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^scripts/.*\.sh$
+        args: [-x, -S, warning]
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.13.1-1
+    hooks:
+      - id: shfmt
+        files: ^scripts/.*\.sh$
+        args: [-i, '2', -ci, -bn, -d]
