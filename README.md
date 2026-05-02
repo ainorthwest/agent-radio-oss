@@ -17,7 +17,21 @@ The bifurcation is intentional:
 | Repo | Purpose | Engines | License story |
 |---|---|---|---|
 | [`agent-radio`](https://github.com/ainorthwest/agent-radio) | Lightcone production stack (AINW Radio) | Kokoro, Chatterbox, Chatterbox-MLX, CSM-MLX, Dia-MLX, Orpheus 3B MLX, Qwen3-TTS (0.6B + 1.7B), MusicGen MLX | Mixed — MusicGen weights are CC-BY-NC, so the production stack is **not commercially deployable as-is** without swapping the music engine |
-| [`agent-radio-oss`](https://github.com/ainorthwest/agent-radio-oss) | Open-source distribution | Kokoro ONNX (TTS) | Apache 2.0 throughout v0.1.0-mvp; Stability Community License once Stable Audio Open lands (Day 4) |
+| [`agent-radio-oss`](https://github.com/ainorthwest/agent-radio-oss) | Open-source distribution | Kokoro ONNX (TTS) | Apache 2.0 throughout v0.1.0-mvp; Stability Community License once Stable Audio Open lands (planned for v0.1.1, see [#9](https://github.com/ainorthwest/agent-radio-oss/issues/9)) |
+
+## Quick start
+
+```bash
+# Install the MVP extras
+uv sync --extra tts --extra quality --extra dev
+
+# Run the demo — no curator key required
+uv run radio demo
+```
+
+The demo runs the full pipeline (render → quality → publisher) against the canned Haystack News sample script and writes a complete output dir under `library/programs/haystack-news/episodes/{timestamp}/` with `episode.mp3`, `transcript.txt`, `transcript.srt`, `quality.json`, `episode.md`, `chapters.json`, and a `DEMO_README.md` that walks you through what each artifact means.
+
+If you have an OpenRouter API key (`OPENROUTER_API_KEY` env var), the demo runs the live curator against your configured Discourse instance instead of the canned script.
 
 ## Stack
 
@@ -26,7 +40,7 @@ The bifurcation is intentional:
 - **TTS:** Kokoro ONNX — 82M params, CPU / CUDA / ROCm / CoreML via ONNX Runtime providers
 - **Quality:** librosa (spectral) + torchmetrics (DNSMOS / SRMR / PESQ / STOI). WER pillar stubbed pending Day 3.
 - **Pipeline:** `curate → render → mix → quality → distribute`
-- **CLI:** `radio config`, `radio distribute`, `radio library`, `radio render`, `radio run pipeline`, `radio soundbooth`, `radio stream`
+- **CLI:** `radio demo`, `radio config`, `radio distribute`, `radio edit`, `radio library`, `radio publish`, `radio render`, `radio run pipeline`, `radio soundbooth`, `radio stream`
 - **Streaming:** AzuraCast HTTP API client (Apache 2.0)
 - **Demo show:** Haystack News with three Kokoro hosts (am_michael, af_bella, am_adam). Note: same name as the production show but a different cast — the production version uses Orpheus voices.
 

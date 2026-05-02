@@ -676,6 +676,12 @@ def mix(
                                 midi_only=False,
                             )
                         cue_asset_path = str(asset.path)
+                    except NotImplementedError as exc:
+                        print(
+                            f"  WARNING: Music cue '{cue.asset}' requested generation, "
+                            f"but generation is not available in this build: {exc}"
+                        )
+                        continue
                     except Exception as exc:
                         print(f"  WARNING: Music generation failed for cue: {exc}")
                         continue

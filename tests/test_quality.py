@@ -113,6 +113,95 @@ class TestQualityReport:
         assert report.overall_score == 0.0
         assert report.notes == []
 
+    def test_verdict_default_is_hold(self):
+        """Default report (overall_score=0) should be verdict=hold so a
+        zero-init report can never be misread as ship."""
+        report = QualityReport()
+        assert report.verdict == "hold"
+
+
+class TestVerdict:
+    """compute_verdict() maps overall_score → (ship | review | hold).
+
+    Pipeline gate (src/pipeline.py) reads report.verdict directly so
+    the gate decision and the report are never inconsistent. These
+    tests pin the threshold boundaries.
+    """
+
+    def test_at_ship_threshold_is_ship(self):
+        from src.quality import SHIP_THRESHOLD, compute_verdict
+
+        verdict, reason = compute_verdict(SHIP_THRESHOLD)
+        assert verdict == "ship"
+        assert "SHIP" in reason
+
+    def test_just_above_ship_is_ship(self):
+        from src.quality import SHIP_THRESHOLD, compute_verdict
+
+        verdict, _ = compute_verdict(SHIP_THRESHOLD + 0.01)
+        assert verdict == "ship"
+
+    def test_just_below_ship_is_review(self):
+        from src.quality import SHIP_THRESHOLD, compute_verdict
+
+        verdict, reason = compute_verdict(SHIP_THRESHOLD - 0.01)
+        assert verdict == "review"
+        assert "REVIEW" in reason
+
+    def test_at_review_threshold_is_review(self):
+        from src.quality import REVIEW_THRESHOLD, compute_verdict
+
+        verdict, _ = compute_verdict(REVIEW_THRESHOLD)
+        assert verdict == "review"
+
+    def test_just_below_review_is_hold(self):
+        from src.quality import REVIEW_THRESHOLD, compute_verdict
+
+        verdict, reason = compute_verdict(REVIEW_THRESHOLD - 0.01)
+        assert verdict == "hold"
+        assert "REVIEW" in reason  # reason names the threshold crossed
+
+    def test_zero_is_hold(self):
+        from src.quality import compute_verdict
+
+        verdict, _ = compute_verdict(0.0)
+        assert verdict == "hold"
+
+    def test_one_is_ship(self):
+        from src.quality import compute_verdict
+
+        verdict, _ = compute_verdict(1.0)
+        assert verdict == "ship"
+
+    def test_reason_includes_actual_score(self):
+        from src.quality import compute_verdict
+
+        _, reason = compute_verdict(0.4321)
+        assert "0.4321" in reason
+
+    def test_evaluate_populates_verdict(self, speech_like_audio: Path):
+        """evaluate() must set verdict + verdict_reason on the report."""
+        report = evaluate(speech_like_audio)
+        assert report.verdict in ("ship", "review", "hold")
+        assert report.verdict_reason  # non-empty
+        # Verdict must agree with score against the same thresholds
+        from src.quality import REVIEW_THRESHOLD, SHIP_THRESHOLD
+
+        if report.overall_score >= SHIP_THRESHOLD:
+            assert report.verdict == "ship"
+        elif report.overall_score >= REVIEW_THRESHOLD:
+            assert report.verdict == "review"
+        else:
+            assert report.verdict == "hold"
+
+    def test_pipeline_imports_thresholds_from_quality(self):
+        """pipeline.py re-exports the same thresholds — single source of truth."""
+        from src.pipeline import QUALITY_REVIEW, QUALITY_SHIP
+        from src.quality import REVIEW_THRESHOLD, SHIP_THRESHOLD
+
+        assert QUALITY_SHIP == SHIP_THRESHOLD
+        assert QUALITY_REVIEW == REVIEW_THRESHOLD
+
 
 class TestEvaluate:
     """Tests for the evaluate() function with real audio analysis."""

@@ -189,6 +189,22 @@ class TestPipelineRunSignature:
         # Default should be None (legacy mode)
         assert sig.parameters["program_slug"].default is None
 
+    def test_run_accepts_no_distribute(self):
+        """pipeline.run() should accept no_distribute (default False).
+
+        Sprint Day 4 surfaced that the documented `radio run pipeline
+        --no-distribute` command was missing — `--dry-run` was the only
+        way to skip Stage 4, but that flag also affects earlier stages.
+        no_distribute is the targeted skip.
+        """
+        import inspect
+
+        from src.pipeline import run
+
+        sig = inspect.signature(run)
+        assert "no_distribute" in sig.parameters
+        assert sig.parameters["no_distribute"].default is False
+
 
 class TestPipelineDataQualityFixes:
     """Tests for PR2: pipeline data quality fixes."""

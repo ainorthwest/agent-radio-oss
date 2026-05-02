@@ -24,9 +24,10 @@ from pathlib import Path
 
 from src.config import load_config
 
-# Quality gate thresholds (from steward/SOUL.md)
-QUALITY_SHIP = 0.7  # score >= this: ship it
-QUALITY_REVIEW = 0.5  # score >= this but < SHIP: flag for human review
+# Quality gate thresholds — single source of truth lives in src.quality.
+# Re-exported here for backward compatibility with any external readers.
+from src.quality import REVIEW_THRESHOLD as QUALITY_REVIEW
+from src.quality import SHIP_THRESHOLD as QUALITY_SHIP
 
 
 def run(
@@ -34,15 +35,27 @@ def run(
     dry_run: bool = False,
     program_slug: str | None = None,
     no_music: bool = False,
+    no_distribute: bool = False,
+    script_override: Path | None = None,
+    date_override: str | None = None,
 ) -> int:
     """Run the full pipeline. Returns exit code (0 = success, 1 = failure).
 
     If program_slug is set, uses the library path resolver for output and
     records the episode in the catalog. Otherwise uses legacy output/ paths.
     If no_music is True, skip all music overlays (voice-only output).
+    If no_distribute is True, run through quality + publisher but skip
+    Stage 4 (R2 + Discourse) and Stage 4b (AzuraCast). Independent of
+    dry_run; either flag suppresses distribute.
+    If script_override is set, skip Stage 1 (curate) and use the
+    provided script.json as-is — copied into the episode directory.
+    Used by ``radio demo`` to drive the pipeline without an LLM key.
+    If date_override is set, use it as the episode date string instead
+    of today's UTC date. Used by ``radio demo`` to embed a timestamp
+    so multiple demo runs don't collide.
     """
     out = Path("output")
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    date_str = date_override or datetime.now(UTC).strftime("%Y-%m-%d")
 
     print(f"\n{'=' * 50}")
     print(f"  Agent Radio — {date_str}")
@@ -87,6 +100,8 @@ def run(
             program_slug,
             dry_run,
             no_music=no_music,
+            no_distribute=no_distribute,
+            script_override=script_override,
         )
     finally:
         if catalog:
@@ -104,18 +119,28 @@ def _run_stages(
     program_slug: str | None,
     dry_run: bool,
     no_music: bool = False,
+    no_distribute: bool = False,
+    script_override: Path | None = None,
 ) -> int:
     """Run pipeline stages. Catalog cleanup handled by caller."""
-    from src.curator import curate
     from src.renderer import render
 
-    # Stage 1: Curate
-    print("[1/4] Curating episode script...")
-    try:
-        script_path = curate(config, output_dir=out, episode_dir=ep_dir)
-    except Exception as exc:
-        print(f"ERROR in curator: {exc}")
-        return 1
+    # Stage 1: Curate (or accept an override script for the demo path)
+    if script_override is not None:
+        print(f"[1/4] Using override script: {script_override}")
+        target_dir = ep_dir if ep_dir is not None else out / "episodes" / date_str
+        target_dir.mkdir(parents=True, exist_ok=True)
+        script_path = target_dir / "script.json"
+        script_path.write_bytes(Path(script_override).read_bytes())
+    else:
+        from src.curator import curate
+
+        print("[1/4] Curating episode script...")
+        try:
+            script_path = curate(config, output_dir=out, episode_dir=ep_dir)
+        except Exception as exc:
+            print(f"ERROR in curator: {exc}")
+            return 1
 
     # Stage 1.5: Script quality evaluation (pre-render gate)
     import json as _json
@@ -232,19 +257,19 @@ def _run_stages(
         print("  Proceeding without quality gate.")
         quality_score = 1.0  # don't block on eval failure
 
-    # Quality gate
-    if quality_score < QUALITY_REVIEW:
-        print(
-            f"\n  HOLD — quality score {quality_score:.2f} below review threshold ({QUALITY_REVIEW})"
-        )
-        print("  Episode held for human review. Not distributing.")
-        dry_run = True
-    elif quality_score < QUALITY_SHIP:
-        print(
-            f"\n  REVIEW — quality score {quality_score:.2f} below ship threshold ({QUALITY_SHIP})"
-        )
-        print("  Episode flagged for human review before distribution.")
-        dry_run = True
+    # Quality gate — read verdict from the report when available so the
+    # gate logic and the report agree on the same decision. When eval
+    # is unavailable (report is None) the fallback quality_score of 1.0
+    # passes; no gate needed.
+    if report is not None:
+        if report.verdict == "hold":
+            print(f"\n  HOLD — {report.verdict_reason}")
+            print("  Episode held for human review. Not distributing.")
+            dry_run = True
+        elif report.verdict == "review":
+            print(f"\n  REVIEW — {report.verdict_reason}")
+            print("  Episode flagged for human review before distribution.")
+            dry_run = True
 
     # Episode history (cross-episode learning — non-blocking)
     try:
@@ -313,8 +338,12 @@ def _run_stages(
         print(f"  WARNING: Publisher failed: {exc}")
 
     # Stage 4: Distribute
-    if dry_run:
-        print("\n[4/4] Distribute skipped (--dry-run or quality gate)")
+    skip_distribute = dry_run or no_distribute
+    if skip_distribute:
+        if no_distribute and not dry_run:
+            print("\n[4/4] Distribute skipped (--no-distribute)")
+        else:
+            print("\n[4/4] Distribute skipped (--dry-run or quality gate)")
         post_url = f"[not distributed] {audio_path}"
     else:
         from src.distributor import distribute
@@ -351,7 +380,7 @@ def _run_stages(
         and bool(config.stream.api_key)
         and bool(config.stream.playlist_name)
     )
-    if has_azuracast and not dry_run:
+    if has_azuracast and not skip_distribute:
         from src.stream import AzuraCastConfig, update_episode
 
         print("\n[4b] Streaming to AzuraCast...")
@@ -371,8 +400,11 @@ def _run_stages(
         except Exception as exc:
             print(f"  WARNING: AzuraCast streaming failed: {exc}")
             print("  Episode distributed to R2. Streaming is non-blocking.")
-    elif has_azuracast and dry_run:
-        print("\n[4b] AzuraCast streaming skipped (--dry-run)")
+    elif has_azuracast and skip_distribute:
+        if no_distribute and not dry_run:
+            print("\n[4b] AzuraCast streaming skipped (--no-distribute)")
+        else:
+            print("\n[4b] AzuraCast streaming skipped (--dry-run)")
 
     print(f"\n{'=' * 50}")
     print("  Done")

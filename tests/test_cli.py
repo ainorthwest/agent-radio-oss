@@ -190,6 +190,7 @@ class TestRunCmd:
             dry_run=False,
             program_slug=None,
             no_music=False,
+            no_distribute=False,
         )
 
     def test_pipeline_with_flags(self, tmp_config: RadioConfig) -> None:
@@ -204,6 +205,23 @@ class TestRunCmd:
             dry_run=True,
             program_slug="haystack-news",
             no_music=True,
+            no_distribute=False,
+        )
+
+    def test_pipeline_no_distribute_flag(self, tmp_config: RadioConfig) -> None:
+        """--no-distribute is independent of --dry-run; either suppresses Stage 4."""
+        with patch("src.pipeline.run", return_value=0) as mock:
+            result = _invoke(
+                ["--program", "haystack-news", "--no-distribute", "run", "pipeline"],
+                tmp_config,
+            )
+        assert result.exit_code == 0
+        mock.assert_called_once_with(
+            config_path="config/radio.yaml",
+            dry_run=False,
+            program_slug="haystack-news",
+            no_music=False,
+            no_distribute=True,
         )
 
     def test_pipeline_nonzero_exit(self, tmp_config: RadioConfig) -> None:

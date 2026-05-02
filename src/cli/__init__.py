@@ -10,6 +10,7 @@ Global options (available on every command):
     -v / --verbose     Detailed output
     --json             Machine-readable JSON output
     --no-music         Skip music overlay
+    --no-distribute    Run pipeline through quality but skip distribute + stream
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ class State:
     verbose: bool = False
     json_output: bool = False
     no_music: bool = False
+    no_distribute: bool = False
 
     _config: object | None = field(default=None, repr=False)
 
@@ -67,6 +69,11 @@ def main(
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Detailed output"),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
     no_music: bool = typer.Option(False, "--no-music", help="Skip music overlay"),
+    no_distribute: bool = typer.Option(
+        False,
+        "--no-distribute",
+        help="Run pipeline through quality but skip distribute + stream",
+    ),
 ) -> None:
     """agent-radio-oss — station control CLI."""
     ctx.obj = State(
@@ -76,6 +83,7 @@ def main(
         verbose=verbose,
         json_output=json_output,
         no_music=no_music,
+        no_distribute=no_distribute,
     )
 
 
@@ -91,6 +99,7 @@ def main(
 # ---------------------------------------------------------------------------
 
 from src.cli.config_cmd import app as config_app  # noqa: E402
+from src.cli.demo_cmd import demo as demo_command  # noqa: E402
 from src.cli.distribute_cmd import app as distribute_app  # noqa: E402
 from src.cli.edit_cmd import app as edit_app  # noqa: E402
 from src.cli.library_cmd import app as library_app  # noqa: E402
@@ -109,3 +118,4 @@ app.add_typer(render_app, name="render")
 app.add_typer(run_app, name="run")
 app.add_typer(soundbooth_app, name="soundbooth")
 app.add_typer(stream_app, name="stream")
+app.command(name="demo", help="Run a one-command demo of the station pipeline.")(demo_command)

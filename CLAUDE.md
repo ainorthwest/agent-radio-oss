@@ -20,6 +20,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **The OSS demo is the autonomous loop, not the CLI.** A station without an agent is just a CLI run by hand. The v0.1.0 demo target is: a stranger on AMD hardware runs one setup script and gets a real autonomous radio station — gather → edit → script → render → quality-check → broadcast — with optional human-in-the-loop checkpoints, auto by default.
 
+## Guiding excellences
+
+The OSS station should be excellent at eight things. They are the bar for any v0.1.x feature decision — when in doubt about scope, ask which of these the work moves forward.
+
+1. **Wire Desk** — story selection across many sources, with editorial judgment about coverage-worthiness
+2. **Editorial tracking** — multi-day arcs, story state, planned vs reactive coverage
+3. **Script writing** — show-aware, voice-aware, register-aware
+4. **Render + anomaly detection + surgical re-render** — fix one segment without re-rendering the episode
+5. **Audio engineering** — classic mix/master tooling + measurable audio science
+6. **Broadcast management** — AzuraCast scheduling and live-stream operations, not just file push
+7. **Autoresearch** — quality scores feed back into script and voice tuning
+8. **Agent Experience (AX)** — the CLI and skills bundle are the operating manual; every interaction feels built FOR the agent driving it
+
+v0.1.0 honestly delivers strong on 4 (segment cache + editor + anomaly loop, Day 3b) and 5 (mixer + 23-metric quality stack, Day 1 + Day 3a), partial on 6 (AzuraCast client wired but no scheduler) and 8 (skills bundle scaffolded with `edit-script`, `publish-episode`, plus `radio demo` for the new-operator path), thin on 1 / 2 / 3 / 7. The README is honest about that; v0.1.1+ targets the editorial pillars next.
+
 ### Two front doors, one engine: CLI + Skills
 
 Both surfaces are **first-class** and call the same `src/*` primitives. Neither is a fallback for the other.

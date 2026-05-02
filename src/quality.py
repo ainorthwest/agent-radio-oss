@@ -29,7 +29,7 @@ import json
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 # Known TTS engines for reference profile resolution.
 # OSS distribution ships only Kokoro; the broader engine set lives in
@@ -38,6 +38,36 @@ KNOWN_ENGINES = frozenset({"kokoro"})
 
 # Default directory for engine-specific reference profiles
 REFERENCE_DIR = Path("config")
+
+# Quality verdict thresholds. Single source of truth — pipeline.py
+# imports these instead of redefining its own constants.
+SHIP_THRESHOLD = 0.7  # overall_score >= this: verdict "ship"
+REVIEW_THRESHOLD = 0.5  # overall_score >= this but < SHIP: "review"
+# Below REVIEW_THRESHOLD: "hold"
+
+Verdict = Literal["ship", "review", "hold"]
+
+
+def compute_verdict(overall_score: float) -> tuple[Verdict, str]:
+    """Map an overall quality score to a verdict + human-readable reason.
+
+    The verdict surfaces the same gate decision the pipeline uses, in
+    the report itself. An autonomous station-runner agent reads
+    quality.json["verdict"] and decides distribute / hold / escalate
+    without re-deriving the thresholds.
+    """
+    if overall_score >= SHIP_THRESHOLD:
+        return "ship", (
+            f"overall_score {overall_score:.4f} at or above SHIP threshold ({SHIP_THRESHOLD})"
+        )
+    if overall_score >= REVIEW_THRESHOLD:
+        return "review", (
+            f"overall_score {overall_score:.4f} between REVIEW ({REVIEW_THRESHOLD}) "
+            f"and SHIP ({SHIP_THRESHOLD}) — flag for human review"
+        )
+    return "hold", (
+        f"overall_score {overall_score:.4f} below REVIEW threshold ({REVIEW_THRESHOLD}) — hold"
+    )
 
 
 def _resolve_engine_reference(engine: str) -> Path:
@@ -86,6 +116,10 @@ class QualityReport:
     spectral_spikes: int = 0  # Energy spikes > 3σ from local mean (clicks/pops)
     repetition_score: float = 0.0  # MFCC self-similarity (0=none, 1=exact loop)
     snr_db: float = 0.0  # Signal-to-noise ratio (voiced / unvoiced energy)
+    # Verdict surfaces the same decision the pipeline gate uses, in the
+    # report itself. Agent reads this directly instead of re-deriving.
+    verdict: Verdict = "hold"
+    verdict_reason: str = ""
     notes: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -932,8 +966,11 @@ def evaluate(
         if len(ref_mfcc) == len(feat_mfcc):
             mfcc_dist = float(np.sqrt(np.sum((ref_mfcc - feat_mfcc) ** 2)))
 
+    overall_rounded = round(overall, 4)
+    verdict, verdict_reason = compute_verdict(overall_rounded)
+
     return QualityReport(
-        overall_score=round(overall, 4),
+        overall_score=overall_rounded,
         dynamic_range_lufs=round(features["lufs_approx"], 2),
         silence_ratio=round(features["silence_ratio"], 4),
         spectral_centroid_mean=round(features["spectral_centroid_mean"], 2),
@@ -961,6 +998,8 @@ def evaluate(
         spectral_spikes=int(features.get("spectral_spikes", 0)),
         repetition_score=round(features.get("repetition_score", 0.0), 4),
         snr_db=round(features.get("snr_db", 0.0), 2),
+        verdict=verdict,
+        verdict_reason=verdict_reason,
         notes=notes,
     )
 
