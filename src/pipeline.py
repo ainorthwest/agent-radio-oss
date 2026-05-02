@@ -139,18 +139,36 @@ def _run_stages(
         try:
             script_path = curate(config, output_dir=out, episode_dir=ep_dir)
         except Exception as exc:
-            print(f"ERROR in curator: {exc}")
+            # Surface the exception class so an agent harness can pattern-match
+            # on ConnectionError / TimeoutError / etc. without parsing prose.
+            print(f"ERROR in curator [{type(exc).__name__}]: {exc}", file=sys.stderr)
             return 1
 
-    # Stage 1.5: Script quality evaluation (pre-render gate)
+    # Load the script JSON before any stage uses it. JSON shape errors are
+    # load-bearing and surface here with a remedy hint — don't let them
+    # masquerade as a "script evaluation failed" warning later.
     import json as _json
 
+    try:
+        script_data: dict = _json.loads(script_path.read_text())
+    except _json.JSONDecodeError as je:
+        print(
+            f"ERROR: script.json at {script_path} is invalid JSON "
+            f"({je.msg} at line {je.lineno} col {je.colno}). "
+            f"Re-run the curator stage, or restore from a previous run "
+            f"(e.g. {script_path.with_suffix('.json.bak')} if present).",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as oe:
+        print(f"ERROR: cannot read script.json at {script_path}: {oe}", file=sys.stderr)
+        return 1
+
+    # Stage 1.5: Script quality evaluation (pre-render gate)
     from src.script_quality import evaluate_script
 
     print("\n[1.5/4] Evaluating script structure...")
-    script_data: dict = {}
     try:
-        script_data = _json.loads(script_path.read_text())
         script_report = evaluate_script(script_data)
         print(f"  Script score: {script_report.overall_score:.2f}")
         for note in script_report.notes:

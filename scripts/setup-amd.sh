@@ -263,16 +263,32 @@ ENVEOF
 fi
 
 # 8. Self-test.
+# Default: warn-and-continue on smoke-test failure (operator-friendly).
+# RADIO_STRICT_SMOKE=1 promotes the failure to an exit-2 — used by CI.
 if [ "$SKIP_SELF_TEST" != "1" ] && [ "${RADIO_DRY_RUN:-}" != "1" ]; then
   radio::log_info "running smoke test (--quick)"
   if bash "$_SELF_DIR/oss-smoke.sh" --quick; then
     radio::status_ok "smoke test passed"
   else
-    radio::status_warn "smoke test failed — install completed but verification did not"
+    if [ "${RADIO_STRICT_SMOKE:-0}" = "1" ]; then
+      radio::status_fail "smoke test failed (RADIO_STRICT_SMOKE=1 — failing setup)" \
+        --remedy "run 'bash scripts/oss-smoke.sh --quick' manually to see the underlying error"
+      exit 2
+    fi
+    radio::status_warn \
+      "smoke test failed — install completed but verification did not (set RADIO_STRICT_SMOKE=1 to fail-fast)"
   fi
 elif [ "$SKIP_SELF_TEST" = "1" ]; then
   radio::status_warn "skipping self-test (--skip-self-test)"
 fi
 
 radio::final_status "AMD ROCm ($GFX_TARGET, kokoro=$KOKORO_PROVIDER_VALUE)"
+# v0.1.0 ships CPU-default on AMD because the MIGraphX GPU path is gated on
+# upstream AMDMIGraphX#4618. Surface that decision visibly so an operator
+# doesn't have to read the README to learn why their RX 9070 isn't GPU-accelerated.
+if [ "$ENABLE_MIGRAPHX" != "1" ]; then
+  radio::log_info \
+    "AMD GPU (MIGraphX) Kokoro path gated on AMDMIGraphX#4618 — running CPU. See docs/investigations/kokoro-amd-rocm.md."
+  radio::log_info "to override: rerun with --enable-migraphx (not recommended for v0.1.0)"
+fi
 radio::log_info "next: 'source .env.suggested && uv run radio demo'"

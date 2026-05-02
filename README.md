@@ -7,7 +7,15 @@
 > **Open-source autonomous AI radio.** Apache 2.0.
 > Core code Apache-2.0; optional DSP extras include a GPL-v3 package — full audit in [LICENSES.md](./LICENSES.md).
 
-> **Status:** `v0.1.0-mvp` pre-release. Day 6 of a 7-day sprint. Days 1–5 shipped; ships Day 7.
+> **Status:** `v0.1.0` released 2026-05-02 (git tag `v0.1.0-mvp`). **Current Phase:** post-MVP — see [CHANGELOG.md](./CHANGELOG.md).
+
+## Why this exists
+
+**Audio AI is the most underserved frontier in open-source machine learning.** Image and text models have rich, vibrant open ecosystems; speech, music, and broadcast pipelines do not. Production text-to-speech still routes through cloud APIs (ElevenLabs, Google, Azure) or proprietary weights that foreclose commercial use. State-of-the-art open-weights TTS is a fraction of the page count of state-of-the-art open-weights LLMs, and most of what does exist is research-grade — interesting on a benchmark, painful in production. **AI Northwest is correcting this.**
+
+`agent-radio-oss` is one slice of that correction. Apache 2.0 throughout. Engine-agnostic primitives — TTS adapter, render/re-render loop, anomaly detection, 23-metric quality stack, broadcast plumbing — so a stranger on commodity hardware can stand up a real, commercial autonomous radio station with zero cloud dependencies. Kokoro ONNX runs on Apple Silicon, AMD ROCm, NVIDIA CUDA, or pure CPU. `whisper.cpp` transcribes on every backend. The educational point is not "look how good our TTS is" — it's **"look how much open audio AI you can already do, and why this ecosystem deserves more attention than it's getting."**
+
+If you build something on top of this, tell us. The whole reason the OSS distribution exists is to seed an ecosystem; it's hard to seed an ecosystem alone.
 
 ## What this is
 
@@ -68,24 +76,40 @@ curate → script-quality → render → anomaly-detect → quality (3-pillar) �
 - **Publisher:** Podcasting 2.0 (`<podcast:locked>`, `<podcast:person>`, `<podcast:transcript>`, `<podcast:chapters>`) plus `episode.md`, `chapters.json`, `episode.txt` (agent payload), and `episode.jsonld`. Per-show `llms.txt` indexes per [llmstxt.org](https://llmstxt.org).
 - **Music:** `v0.1.0` overlays pre-rendered music assets. Stable Audio Open generation is deferred to `v0.1.1` ([GH#9](https://github.com/ainorthwest/agent-radio-oss/issues/9)) — needs a PyTorch-on-ROCm validation pass that did not fit the sprint.
 
-## How honest is `v0.1.0`?
+## How honest is `v0.1.0`? — Excellences scorecard
 
-The OSS station aspires to be excellent at eight things. `v0.1.0` is honest about which ones it nails:
+The OSS station aspires to be excellent at eight things. `v0.1.0` is honest about which it nails:
 
-- **Strong:** **(4)** render + anomaly + surgical re-render — the segment cache + editor + anomaly loop closes the autonomous-station correction loop. **(5)** audio engineering — 23-metric quality stack with named verdicts, real round-trip WER.
-- **Partial:** **(6)** broadcast — AzuraCast HTTP client wired, no scheduler. **(8)** Agent Experience — skills bundle scaffolded (`edit-script`, `publish-episode`) plus `radio demo` for the new-operator path; depth coming.
-- **Thin:** **(1)** Wire Desk story selection, **(2)** editorial tracking across days, **(3)** show-aware script writing, **(7)** autoresearch feedback into voice tuning. These are the AINW-flavored production newsroom and stay upstream by the bifurcation rule. The OSS station-runner agent (Hermes-driven reference profile) is written fresh in `v0.1.1+`.
+| # | Excellence | v0.1.0 | What ships | v0.1.1 plan |
+|---|---|---|---|---|
+| 1 | Wire Desk (story selection) | thin | `gather-news` skill wraps generic curator (RSS / Discourse API) | Story scoring, dedup, multi-source coverage logic |
+| 2 | Editorial tracking | thin | `episode_history.py` skeleton, library catalog | Multi-day arc state, beat tracking, freshness gates |
+| 3 | Script writing | thin | Curator + script-quality LLM gate | Show-aware `ScriptWriter` Protocol, voice register selection |
+| 4 | Render + anomaly + surgical re-render | **strong** | Segment cache (sha256-keyed, atomic) + `editor.py` + `anomaly.py` + the full correction loop | Refinement, additional anomaly classes |
+| 5 | Audio engineering | **strong** | 23-metric three-pillar quality (librosa + torchmetrics + whisper.cpp WER), mixer, DSP, named verdicts | Refinement, optional EQ presets per voice |
+| 6 | Broadcast management | partial | AzuraCast HTTP client wired (`radio stream …`), R2, Discourse, Podcasting 2.0 RSS | True scheduler, playlist intelligence |
+| 7 | Autoresearch | thin | `results.tsv` write-only logging | Closed feedback loop into voice/voice-profile tuning |
+| 8 | Agent Experience (AX) | partial | 7 skills (`gather-news`, `render-episode`, `check-quality`, `edit-script`, `publish-episode`, `broadcast`, `run-station`) + [`AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md) + auto-bootstrapping `radio demo` + four setup scripts with strict-smoke fail-fast | Harness-tested reference profiles, structured `--json` everywhere |
 
-`v0.1.1+` targets the editorial pillars; `v0.1.0` nails the rendering and audio-science halves of the loop.
+Excellences 1–3 and 7 stay thin in `v0.1.0` by the **bifurcation rule** — AI Northwest's editorial taste, Bard's prompt corpus, and the Steward newsroom logic all stay in the proprietary upstream [`agent-radio`](https://github.com/ainorthwest/agent-radio) repo. The OSS station-runner agent is **written fresh**; it does not port AINW IP. Operators bring their own taste and let their agent harness express it.
+
+`v0.1.1+` targets the editorial pillars; `v0.1.0` nails the rendering, audio-science, and AX halves of the loop.
 
 ## Two front doors: CLI and Skills
 
 Both surfaces are first-class and call the same `src/*` primitives.
 
 - **`radio` CLI** (Typer, `src/cli/`): operator and debugging surface. `radio demo`, `radio render audition`, `radio run pipeline`, `radio edit script`, `radio publish episode`, etc. Run `uv run radio --help`.
-- **Skills bundle** (`skills/`): the agent's operating manual. Hermes / Claude Code / other agent harnesses load `skills/*` natively. Decompose into both major steps (`render-episode`, `check-quality`) and minor steps (`render-segment`, `decide-ship-review-reject`) so the agent recovers from partial failures without re-running the whole episode.
+- **Skills bundle** (`skills/`): the agent's operating manual. Each skill is a `SKILL.md` prose contract plus a thin Python wrapper around the CLI — harness-agnostic by design. The v0.1.0 bundle:
+  - [`gather-news`](./skills/gather-news/SKILL.md) — start of the loop; generic RSS / Discourse fetch
+  - [`render-episode`](./skills/render-episode/SKILL.md) — Kokoro TTS + segment cache + manifest
+  - [`check-quality`](./skills/check-quality/SKILL.md) — three-pillar verdict (`ship` / `review` / `reject`)
+  - [`edit-script`](./skills/edit-script/SKILL.md) — surgical mutations + targeted re-render
+  - [`publish-episode`](./skills/publish-episode/SKILL.md) — Podcasting 2.0, llms.txt, agent payload
+  - [`broadcast`](./skills/broadcast/SKILL.md) — R2 + Discourse + RSS + AzuraCast (best-effort branches)
+  - [`run-station`](./skills/run-station/SKILL.md) — meta-skill; the autonomous-station playbook
 
-See [`CLAUDE.md`](./CLAUDE.md) for the full architecture, and [`oss-mvp-sprint.md`](./oss-mvp-sprint.md) for the day-by-day sprint plan and "what we are NOT doing" list.
+See [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md) for how to wire the bundle into Claude Code / Hermes / Gaia / your own harness — including the state contract and the recovery-from-partial-failure procedure. See [`CLAUDE.md`](./CLAUDE.md) for the full architecture and the bifurcation rule, and [`oss-mvp-sprint.md`](./oss-mvp-sprint.md) for the sprint plan and "what we are NOT doing" list.
 
 ## License
 
@@ -102,7 +126,9 @@ This repo is the open distribution of [`agent-radio`](https://github.com/ainorth
 
 ## Contributing
 
-Sprint in progress; `v0.1.0` ships Day 7 (target: 2026-05-03). Issues welcome now; PRs welcome after release.
+`v0.1.0-mvp` shipped 2026-05-02. Issues and PRs welcome.
+
+If you build something on top of this — a different show, a different harness, a different engine, anything — open an issue and tell us. The OSS distribution exists to seed an ecosystem that the audio AI space deserves.
 
 ## Acknowledgements
 

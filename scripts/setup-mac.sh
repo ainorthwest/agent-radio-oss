@@ -179,12 +179,21 @@ ENVEOF
 fi
 
 # 7. Self-test.
+# Default: warn-and-continue on smoke-test failure (operator-friendly).
+# RADIO_STRICT_SMOKE=1 promotes the failure to an exit-2 — used by CI and
+# the Day 7 Docker baseline to catch silent regressions before they ship.
 if [ "$SKIP_SELF_TEST" != "1" ] && [ "${RADIO_DRY_RUN:-}" != "1" ]; then
   radio::log_info "running smoke test (--quick)"
   if bash "$_SELF_DIR/oss-smoke.sh" --quick; then
     radio::status_ok "smoke test passed"
   else
-    radio::status_warn "smoke test failed — install completed but verification did not"
+    if [ "${RADIO_STRICT_SMOKE:-0}" = "1" ]; then
+      radio::status_fail "smoke test failed (RADIO_STRICT_SMOKE=1 — failing setup)" \
+        --remedy "run 'bash scripts/oss-smoke.sh --quick' manually to see the underlying error"
+      exit 2
+    fi
+    radio::status_warn \
+      "smoke test failed — install completed but verification did not (set RADIO_STRICT_SMOKE=1 to fail-fast)"
   fi
 elif [ "$SKIP_SELF_TEST" = "1" ]; then
   radio::status_warn "skipping self-test (--skip-self-test)"
