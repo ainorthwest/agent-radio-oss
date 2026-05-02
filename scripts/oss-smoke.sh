@@ -152,7 +152,16 @@ case "$MODE" in
       radio::status_fail "demo completed but no quality.json was written" \
         --remedy "the pipeline returned 0 but the quality stage didn't produce output — likely a missing dep (see stderr above)" || exit 1
     fi
-    verdict="$(python3 -c "import json,sys; print(json.load(open('$quality_json')).get('verdict','unknown'))")"
+    # Pass the path as a positional arg, never as part of the Python source.
+    # An operator-controlled episode directory name with a single quote in it
+    # would otherwise inject into the Python literal — the path comes from
+    # `find` output and is not trusted as a code fragment.
+    verdict="$(
+      python3 - "$quality_json" <<'PYEOF'
+import json, sys
+print(json.load(open(sys.argv[1])).get("verdict", "unknown"))
+PYEOF
+    )"
     case "$verdict" in
       ship | review)
         radio::status_ok "demo verdict: $verdict (overall_score >= 0.5)"

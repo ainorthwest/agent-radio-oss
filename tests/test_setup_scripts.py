@@ -884,6 +884,36 @@ def test_oss_smoke_audition_invokes_radio_render(shell_runner: ShellRunner, tmp_
 
 
 @pytest.mark.skipif(not OSS_SMOKE_SH.exists(), reason="scripts/oss-smoke.sh not yet created")
+def test_oss_smoke_quality_path_not_interpolated_into_python(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """Regression for shell-injection finding from the PR3 review.
+
+    The verdict-extraction step in --full mode parses ``quality.json``
+    via Python. The path comes from ``find`` output and is operator-
+    controlled (episode dir names). It must be passed as ``sys.argv[1]``,
+    NEVER interpolated into a Python source literal — otherwise a
+    directory named like ``foo'); __import__('os').system('id') #`` would
+    execute arbitrary code.
+
+    This test reads the script source and asserts the extraction reads
+    the path from sys.argv (heredoc + positional arg), not from a
+    formatted string literal.
+    """
+    text = OSS_SMOKE_SH.read_text()
+    # Find the verdict-extraction block.
+    assert "quality_json" in text
+    # The extraction must use sys.argv (heredoc + positional), not the
+    # vulnerable pattern open('$quality_json').
+    assert "sys.argv" in text, (
+        "verdict extraction must read the path via sys.argv, not interpolation"
+    )
+    assert "open('$quality_json'" not in text, (
+        "shell injection regression: do not interpolate $quality_json into a Python literal"
+    )
+
+
+@pytest.mark.skipif(not OSS_SMOKE_SH.exists(), reason="scripts/oss-smoke.sh not yet created")
 def test_oss_smoke_unknown_mode_rejected(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """An unrecognized mode must exit nonzero with a usage message."""
     shell_runner.stub("uv", returncode=0)

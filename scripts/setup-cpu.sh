@@ -114,7 +114,10 @@ if [ "$SKIP_WHISPER_BUILD" != "1" ]; then
   else
     radio::log_info "whisper.cpp already cloned — skipping git clone"
   fi
-  if [ -f "whisper.cpp/build/bin/whisper-cli" ] && [ "${RADIO_DRY_RUN:-}" != "1" ]; then
+  # Idempotent skip is independent of dry-run: a real run would skip when
+  # the binary is present, so dry-run must report the same skip rather
+  # than emit misleading "would run cmake" lines.
+  if [ -f "whisper.cpp/build/bin/whisper-cli" ]; then
     radio::status_ok "whisper.cpp already built — skipping cmake"
   else
     radio::log_info "building whisper.cpp (CPU)"
