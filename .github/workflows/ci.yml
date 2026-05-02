@@ -37,6 +37,26 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra tts --extra quality --extra distribute --extra dev
 
+      - name: Install shell-lint tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y shellcheck shfmt
+
+      - name: Install shell-lint tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck shfmt
+
+      - name: Shell lint (shellcheck + shfmt)
+        shell: bash
+        run: |
+          shopt -s nullglob globstar
+          scripts_glob=(scripts/**/*.sh)
+          if [ ${#scripts_glob[@]} -eq 0 ]; then
+            echo "No shell scripts under scripts/ yet — skipping."
+            exit 0
+          fi
+          shellcheck -x -S warning "${scripts_glob[@]}"
+          shfmt -i 2 -ci -bn -d "${scripts_glob[@]}"
+
       - name: Lint (ruff)
         run: uv run ruff check .
 
