@@ -1,0 +1,65 @@
+# config/radio.example.yaml — example runtime config for agent-radio-oss.
+#
+# Copy this file to `config/radio.yaml` (which is gitignored) and fill in
+# the values that apply to your station. Secrets do NOT live here — they
+# come from environment variables (or `.env`); see comments below for which
+# env var feeds which field. The code reads secrets via
+# `src/secrets.py:get_secret()`, so you can either export them in your
+# shell or drop them in `.env` next to this file.
+#
+# Field references trace back to src/config.py:80 (`load_config`).
+
+# Forum / community discovery (Discourse).
+discourse:
+  base_url: "https://community.example.org"
+  api_username: "steward"          # Discourse username the API key belongs to
+  lookback_hours: 24                # how far back to scan for activity
+  categories: []                    # list of category slugs; empty = all
+  # api_key comes from $AGENT_RADIO_DISCOURSE_API_KEY
+
+# Curator — the LLM that turns forum activity into a script.
+curator:
+  model: "anthropic/claude-sonnet-4"
+  base_url: "https://openrouter.ai/api/v1"
+  max_tokens: 4096
+  target_duration_minutes: 5
+  # api_key comes from $OPENROUTER_API_KEY
+
+# Renderer — TTS engine and output format.
+renderer:
+  engine: "kokoro"                  # only `kokoro` is wired in OSS v0.1.0
+  sample_rate: 24000
+  output_format: "mp3"
+
+# Distribution — Cloudflare R2 (S3-compatible) + Discourse post.
+# Leave R2 fields blank for local-only operation.
+distributor:
+  post_to_discourse: false           # flip true once api keys are set
+  discourse_category: ""             # integer category ID as a string, e.g. "6"
+  # The five R2 secrets all come from env:
+  #   $AGENT_RADIO_R2_BUCKET
+  #   $AGENT_RADIO_R2_ENDPOINT
+  #   $AGENT_RADIO_R2_ACCESS_KEY_ID
+  #   $AGENT_RADIO_R2_SECRET_ACCESS_KEY
+  #   $AGENT_RADIO_R2_PUBLIC_URL_BASE
+
+# Live-stream broadcast — AzuraCast HTTP API. Optional.
+stream:
+  enabled: false
+  base_url: ""                      # e.g. "https://radio.example.com"
+  station_id: 1
+  playlist_name: ""                 # rolling playlist; created on first push
+  # api_key comes from $AGENT_RADIO_AZURACAST_API_KEY
+
+# Library — where rendered episodes live on disk.
+library:
+  root: "library"
+  db_name: "radio.db"
+
+# Voice cast — name → path to a Kokoro voice profile YAML in `voices/`.
+# These names are referenced by the `cast` block in each show's
+# `program.yaml` (e.g. `library/programs/haystack-news/program.yaml`).
+voices:
+  michael: "voices/kokoro-michael.yaml"
+  bella:   "voices/kokoro-bella.yaml"
+  adam:    "voices/kokoro-adam.yaml"
