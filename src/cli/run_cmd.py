@@ -27,6 +27,7 @@ def pipeline(ctx: typer.Context) -> None:
         dry_run=state.dry_run,
         program_slug=state.program,
         no_music=state.no_music,
+        no_distribute=state.no_distribute,
     )
     if state.json_output:
         output(state, {"exit_code": exit_code, "success": exit_code == 0})
