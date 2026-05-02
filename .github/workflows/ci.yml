@@ -48,14 +48,22 @@ jobs:
       - name: Shell lint (shellcheck + shfmt)
         shell: bash
         run: |
-          shopt -s nullglob globstar
-          scripts_glob=(scripts/**/*.sh)
-          if [ ${#scripts_glob[@]} -eq 0 ]; then
+          # `find` instead of `**/*.sh` so this works on macOS bash 3.2
+          # (default on macos-14 runners) where `globstar` is unavailable
+          # and `mapfile` may not exist. We control every file under
+          # `scripts/`, so newlines-in-names are not a concern here.
+          if [ ! -d scripts ]; then
+            echo "No scripts/ directory yet — skipping."
+            exit 0
+          fi
+          if ! find scripts -name '*.sh' -print -quit | grep -q .; then
             echo "No shell scripts under scripts/ yet — skipping."
             exit 0
           fi
-          shellcheck -x -S warning "${scripts_glob[@]}"
-          shfmt -i 2 -ci -bn -d "${scripts_glob[@]}"
+          find scripts -name '*.sh' -print0 |
+            xargs -0 shellcheck -x -S warning
+          find scripts -name '*.sh' -print0 |
+            xargs -0 shfmt -i 2 -ci -bn -d
 
       - name: Lint (ruff)
         run: uv run ruff check .

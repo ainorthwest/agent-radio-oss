@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.shell_harness import ShellRunner
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
@@ -103,29 +105,21 @@ def test_executable_script_passes_shellcheck(script: Path) -> None:
     )
 
 
-def test_discovery_finds_no_scripts_yet_or_some() -> None:
-    """Bootstrap-friendly: this test passes whether scripts/ is empty or not.
-
-    PR 1 ships no scripts. Later PRs ship scripts and the parametrized tests
-    above start running. Both states are valid.
-    """
-    assert isinstance(SCRIPTS, list)
-    assert isinstance(LIB_SCRIPTS, list)
-
-
 # ---------------------------------------------------------------------------
 # Tier 2 — shell_runner fixture sanity
 # ---------------------------------------------------------------------------
+#
+# These tests double as living documentation for how Tier-2 mock tests in
+# later PRs should use the harness. Note that ``shell_runner`` and
+# ``tmp_path`` are the *same* tmp_path under the hood — pytest passes the
+# same instance to all fixtures and tests in a single invocation, so the
+# probe scripts written into ``tmp_path`` sit alongside the fixture's
+# ``_stubs_bin/`` and ``_stubs_calls.log``.
 
 
-def test_shell_runner_fixture_is_provided(shell_runner) -> None:  # type: ignore[no-untyped-def]
-    """The shell_runner fixture from conftest.py is wired into pytest."""
-    assert shell_runner is not None
-    assert hasattr(shell_runner, "stub")
-    assert hasattr(shell_runner, "run")
-
-
-def test_shell_runner_stubs_intercept_external_commands(shell_runner, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_shell_runner_stubs_intercept_external_commands(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
     """A stubbed command logs invocations and returns the configured exit code."""
     shell_runner.stub("fakecmd", returncode=0, stdout="hello\n")
 
@@ -139,7 +133,36 @@ def test_shell_runner_stubs_intercept_external_commands(shell_runner, tmp_path) 
     assert any(call[0].endswith("fakecmd") and call[1:] == ["one", "two"] for call in result.calls)
 
 
-def test_shell_runner_propagates_nonzero_exit(shell_runner, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_shell_runner_handles_args_with_pipes_and_slashes(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """Arguments containing ``|``, ``/``, spaces survive the call log round-trip.
+
+    The harness uses NUL-separated records inside each call log line, so
+    arguments with shell-meta characters or path-like content are preserved
+    intact. This is critical for stubbing curl / cmake / uv etc. with realistic
+    URL and path arguments in later PRs.
+    """
+    shell_runner.stub("downloader", returncode=0)
+
+    script = tmp_path / "probe.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        'downloader "https://example.com/path?a=1|b=2" "/tmp/with space"\n'
+    )
+    script.chmod(0o755)
+
+    result = shell_runner.run(str(script))
+
+    assert result.returncode == 0
+    assert any(
+        call[0].endswith("downloader")
+        and call[1:] == ["https://example.com/path?a=1|b=2", "/tmp/with space"]
+        for call in result.calls
+    )
+
+
+def test_shell_runner_propagates_nonzero_exit(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """A stub that returns nonzero should propagate up through the script."""
     shell_runner.stub("breakme", returncode=2)
 
@@ -152,7 +175,7 @@ def test_shell_runner_propagates_nonzero_exit(shell_runner, tmp_path) -> None:  
     assert result.returncode != 0
 
 
-def test_shell_runner_restores_path_after_run(shell_runner, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_shell_runner_restores_path_after_run(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """The fixture must not leak ``$PATH`` modifications across tests."""
     original_path = os.environ.get("PATH", "")
     shell_runner.stub("ephemeral", returncode=0)
@@ -166,7 +189,7 @@ def test_shell_runner_restores_path_after_run(shell_runner, tmp_path) -> None:  
     assert os.environ.get("PATH", "") == original_path
 
 
-def test_shell_runner_passes_env_through(shell_runner, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_shell_runner_passes_env_through(shell_runner: ShellRunner, tmp_path: Path) -> None:
     """Caller-supplied env variables reach the script."""
     script = tmp_path / "probe.sh"
     script.write_text(
