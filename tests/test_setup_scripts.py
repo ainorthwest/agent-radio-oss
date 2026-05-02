@@ -460,6 +460,34 @@ def test_download_models_rejects_unknown_model_size(
     assert "giant.de" in combined or "unknown" in combined.lower() or "invalid" in combined.lower()
 
 
+def _read_pinned_shas() -> dict[str, str]:
+    """Parse pinned sha256 constants out of download-models.sh.
+
+    Returns a mapping ``filename -> sha`` so tests can stub sha256sum to
+    return the expected value per file. We pair the URL constants
+    (KOKORO_ONNX_URL → kokoro-v1.0.onnx) with their adjacent _SHA constants
+    so the test stays in sync if a future PR rotates a sha.
+    """
+    if not DOWNLOAD_MODELS_SH.exists():
+        return {}
+    text = DOWNLOAD_MODELS_SH.read_text()
+    shas: dict[str, str] = {}
+    import re
+
+    pairs = [
+        ("KOKORO_ONNX", "kokoro-v1.0.onnx"),
+        ("KOKORO_VOICES", "voices-v1.0.bin"),
+        ("WHISPER_BASE_EN", "ggml-base.en.bin"),
+        ("WHISPER_SMALL_EN", "ggml-small.en.bin"),
+        ("WHISPER_MEDIUM_EN", "ggml-medium.en.bin"),
+    ]
+    for prefix, fname in pairs:
+        m = re.search(rf'^{prefix}_SHA="([^"]*)"', text, re.MULTILINE)
+        if m:
+            shas[fname] = m.group(1)
+    return shas
+
+
 @pytest.mark.skipif(
     not DOWNLOAD_MODELS_SH.exists(), reason="scripts/download-models.sh not yet created"
 )
@@ -468,9 +496,10 @@ def test_download_models_idempotent_when_files_present_with_correct_sha(
 ) -> None:
     """If the models exist on disk with matching sha256, skip the download.
 
-    We pre-create the three model files in the fake models dir and stub
-    sha256sum to always print the expected hash. The downloader must
-    detect the cache hit and avoid invoking curl/wget.
+    We pre-create the three model files in the fake models dir and write
+    a sha256sum stub that returns the *correct* pinned SHA for each
+    filename it's asked about (parsed from download-models.sh). The
+    downloader must detect the cache hit and avoid invoking curl/wget.
     """
     models_dir = tmp_path / "models"
     models_dir.mkdir()
@@ -478,24 +507,27 @@ def test_download_models_idempotent_when_files_present_with_correct_sha(
     (models_dir / "voices-v1.0.bin").write_text("fake")
     (models_dir / "ggml-base.en.bin").write_text("fake")
 
-    # sha256sum / shasum stubs that pretend any file matches any sha. The
-    # downloader's verify path expands to "<sha>  <filename>" — we spit that
-    # back so the comparison succeeds for whichever expected sha it knows.
-    # Using a sentinel return value of 0 with the file-as-printed-back
-    # convention. The downloader is expected to check via `sha256sum -c`
-    # OR `sha256sum <file>` then string-compare; we cover the latter by
-    # stubbing the command to print whatever sha it expects.
+    pinned = _read_pinned_shas()
+    # Build a per-filename lookup table inside the stub. The stub reads
+    # the basename of its last argument and prints the matching sha.
+    lookup_entries = "\n".join(
+        f'  if [ "$base" = "{fname}" ]; then echo "{sha}  $1"; exit 0; fi'
+        for fname, sha in pinned.items()
+        if sha
+    )
     sha_stub_body = (
         "#!/usr/bin/env bash\n"
         'log="${RADIO_TEST_CALL_LOG:?RADIO_TEST_CALL_LOG not set}"\n'
-        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
-        '# When called with `-c`, succeed silently.\n'
-        'if [[ "${1:-}" == "-c" ]]; then exit 0; fi\n'
-        '# Otherwise echo the expected sha (read from env if test set it,'
-        ' else a deterministic placeholder) followed by the filename.\n'
-        '# The downloader is expected to compare this output against its embedded sha.\n'
-        'expected="${RADIO_TEST_FAKE_SHA:-deadbeef}"\n'
-        'echo "$expected  ${@: -1}"\n'
+        '{ printf "%s" "$0";'
+        ' for arg in "$@"; do printf "\\x00%s" "$arg"; done;'
+        ' printf "\\n"; }'
+        ' >> "$log"\n'
+        '# Locate the file argument (last positional).\n'
+        'for f in "$@"; do :; done\n'
+        'base="$(basename "$f")"\n'
+        f"{lookup_entries}\n"
+        '# Unknown filename — print a deadbeef sha to force mismatch.\n'
+        'echo "deadbeefdeadbeef  $f"\n'
     )
     sha_stub_path = tmp_path / "_stubs_bin" / "sha256sum"
     sha_stub_path.write_text(sha_stub_body)
@@ -507,16 +539,14 @@ def test_download_models_idempotent_when_files_present_with_correct_sha(
     shell_runner.stub("curl", returncode=99, stdout="curl was called!\n")
     shell_runner.stub("wget", returncode=99, stdout="wget was called!\n")
 
-    # We don't know the embedded sha at test-write time, so this test is
-    # constructed to pass under either of two reasonable downloader
-    # behaviors: (1) the downloader skips entirely when files are present
-    # without re-checking sha (a valid simple-idempotency choice), or
-    # (2) it checks sha and matches.
     result = shell_runner.run(
         str(DOWNLOAD_MODELS_SH),
         args=["--models-dir", str(models_dir)],
     )
 
+    assert result.returncode == 0, (
+        f"idempotent run should succeed; stdout={result.stdout}\nstderr={result.stderr}"
+    )
     invoked = [c[0] for c in result.calls]
     curl_called = any(c.endswith("/curl") for c in invoked)
     wget_called = any(c.endswith("/wget") for c in invoked)
