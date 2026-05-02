@@ -135,6 +135,68 @@ class TestDemoCommand:
         )
         assert result.exit_code == 1
 
+    def test_demo_bootstraps_config_from_example_when_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """First-run AX: if config/radio.yaml is missing but radio.example.yaml
+        is present, the demo command must copy the example into place
+        rather than erroring out with "Copy config/radio.example.yaml..."
+
+        On a fresh clone after `bash scripts/download-models.sh`, the operator
+        should be able to run `uv run radio demo` and have it just work.
+        Forcing them to first run a copy command is the kind of friction
+        excellence #8 (AX) explicitly forbids.
+
+        We chdir into a tmp_path that has only `config/radio.example.yaml`
+        (mirroring a fresh clone) and assert the demo creates
+        `config/radio.yaml` and proceeds. We mock pipeline.run so the test
+        doesn't actually render audio.
+        """
+        # Build a fake fresh-clone layout under tmp_path.
+        (tmp_path / "config").mkdir()
+        # Copy the real example yaml so load_config will accept it.
+        real_example = Path(__file__).resolve().parent.parent / "config" / "radio.example.yaml"
+        (tmp_path / "config" / "radio.example.yaml").write_text(real_example.read_text())
+        # Pre-create the canned sample so the no-creds path doesn't trip
+        # on a missing sample.
+        (tmp_path / "library" / "programs" / "haystack-news" / "episodes" / "sample").mkdir(
+            parents=True
+        )
+        sample_path = (
+            Path(__file__).resolve().parent.parent
+            / "library"
+            / "programs"
+            / "haystack-news"
+            / "episodes"
+            / "sample"
+            / "script.json"
+        )
+        (
+            tmp_path
+            / "library"
+            / "programs"
+            / "haystack-news"
+            / "episodes"
+            / "sample"
+            / "script.json"
+        ).write_text(sample_path.read_text())
+
+        monkeypatch.chdir(tmp_path)
+
+        config_yaml = tmp_path / "config" / "radio.yaml"
+        assert not config_yaml.exists(), "test premise: radio.yaml should not exist yet"
+
+        with (
+            patch("src.cli.demo_cmd._curator_credentials_present", return_value=False),
+            patch("src.pipeline.run", return_value=0),
+        ):
+            runner.invoke(app, ["demo"], catch_exceptions=True)
+
+        assert config_yaml.exists(), (
+            "demo command must auto-copy config/radio.example.yaml → config/radio.yaml "
+            "when the local config is missing (first-run AX)."
+        )
+
     def test_demo_errors_when_sample_missing_and_no_creds(
         self, tmp_config_no_creds: RadioConfig
     ) -> None:

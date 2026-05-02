@@ -38,6 +38,28 @@ SAMPLE_SCRIPT_PATH = Path("library/programs/haystack-news/episodes/sample/script
 
 DEMO_PROGRAM_SLUG = "haystack-news"
 
+# First-run bootstrap: when the operator has run `bash scripts/download-models.sh`
+# but not copied the example config, the demo command auto-copies it. Forcing
+# a manual `cp config/radio.example.yaml config/radio.yaml` would be the kind
+# of friction excellence #8 (AX) explicitly forbids.
+CONFIG_PATH = Path("config/radio.yaml")
+EXAMPLE_CONFIG_PATH = Path("config/radio.example.yaml")
+
+
+def _ensure_config_present() -> None:
+    """Auto-copy ``config/radio.example.yaml`` → ``config/radio.yaml`` if missing."""
+    if CONFIG_PATH.exists():
+        return
+    if not EXAMPLE_CONFIG_PATH.exists():
+        return  # Nothing we can do — caller will hit a clearer error from load_config.
+    import shutil
+
+    print(
+        f"ⓘ {CONFIG_PATH} not found — bootstrapping from {EXAMPLE_CONFIG_PATH}. "
+        "Edit it later to add credentials for the full pipeline."
+    )
+    shutil.copy2(EXAMPLE_CONFIG_PATH, CONFIG_PATH)
+
 
 def _curator_credentials_present(config_path: str) -> bool:
     """Return True if the curator has a usable LLM key."""
@@ -119,10 +141,13 @@ def demo(ctx: typer.Context) -> None:
 
     Always runs with --no-distribute on. Detects whether curator
     credentials are configured; uses the canned sample script if not.
+    Auto-bootstraps ``config/radio.yaml`` from the example when missing.
     """
     state = ctx.obj
     from src.paths import LibraryPaths
     from src.pipeline import run as pipeline_run
+
+    _ensure_config_present()
 
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d-demo-%H%M%S")
     used_curator = _curator_credentials_present(state.config_path)

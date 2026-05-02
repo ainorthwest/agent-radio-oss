@@ -2,6 +2,18 @@
 
 CPU is `agent-radio-oss`'s **universal baseline**. Every supported platform must produce the same audio on `KOKORO_PROVIDER=CPUExecutionProvider`. If the GPU path is broken on your hardware, CPU is always available as a fallback. If a contributor's parity numbers come in suspicious, the CPU baseline is the reference everyone else gets compared against.
 
+## One-shot install
+
+```bash
+bash scripts/setup-cpu.sh
+```
+
+That handles `uv sync`, the whisper.cpp build, model downloads, writes `.env.suggested`, and runs a smoke check. After the script completes, `uv run radio demo` produces a Haystack News episode end-to-end.
+
+> The script installs only the runtime extras (`tts`, `quality`). Contributors who want to run the test suite should run `uv sync --extra dev` once after setup to add ruff/mypy/pytest.
+
+The sections below document what the script does so operators can reproduce it by hand or troubleshoot a partial install.
+
 ## When to use
 
 - **Any environment without a GPU.** Pure server installs, Docker without `--gpus`, CI runners, low-end laptops.
@@ -14,7 +26,8 @@ CPU is `agent-radio-oss`'s **universal baseline**. Every supported platform must
 CPU support ships in the default `onnxruntime` wheel on every platform. There is no separate package, no compile flag, no env var required beyond setting our `KOKORO_PROVIDER`:
 
 ```bash
-uv sync --extra tts --extra quality --extra dev
+uv sync --extra tts --extra quality
+# add --extra dev as well if you want pytest/ruff/mypy for development
 
 # Verify CPU provider is available (always true):
 uv run python -c "import onnxruntime; assert 'CPUExecutionProvider' in onnxruntime.get_available_providers(); print('OK')"

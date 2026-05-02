@@ -659,6 +659,277 @@ def test_radio_example_yaml_exists() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# scripts/setup-cpu.sh — universal CPU baseline setup
+# ---------------------------------------------------------------------------
+
+SETUP_CPU_SH = SCRIPTS_DIR / "setup-cpu.sh"
+
+
+def _clean_setup_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a base env for setup-script tests.
+
+    The tests run under ``uv run pytest``, which sets ``VIRTUAL_ENV``;
+    setup-cpu.sh's ``guard_no_venv`` would correctly refuse to proceed.
+    Tests need to clear it. We can't easily *unset* via the shell_runner's
+    env-merge (it copies os.environ first), so we set ``VIRTUAL_ENV=""``
+    which the bash check ``[ -n "$VIRTUAL_ENV" ]`` treats as unset.
+    """
+    base = {"RADIO_PLATFORM_OVERRIDE": "linux-cpu", "VIRTUAL_ENV": ""}
+    if extra:
+        base.update(extra)
+    return base
+
+
+@pytest.mark.skipif(not SETUP_CPU_SH.exists(), reason="scripts/setup-cpu.sh not yet created")
+def test_setup_cpu_dry_run_does_not_invoke_destructive_commands(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """``--dry-run`` must not actually call uv/cmake/curl/etc."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "sha256sum", "shasum", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+
+    # python3 stub claiming 3.11+ for python_version_ok.
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    result = shell_runner.run(
+        str(SETUP_CPU_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env(),
+    )
+
+    assert result.returncode == 0, (
+        f"dry-run should succeed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    # No 'uv sync', no 'cmake -B ...', no 'curl --output', no 'git clone' may fire.
+    # Read-only probes like 'uv --version' (called by radio::final_status) are fine.
+    destructive_calls = []
+    for call in result.calls:
+        cmd = call[0]
+        args = call[1:]
+        if cmd.endswith("/uv") and "sync" in args:
+            destructive_calls.append(call)
+        elif cmd.endswith("/cmake") and "-B" in args:
+            destructive_calls.append(call)
+        elif cmd.endswith("/make"):
+            destructive_calls.append(call)
+        elif cmd.endswith("/curl") and any(a.startswith("http") for a in args):
+            destructive_calls.append(call)
+        elif cmd.endswith("/git") and "clone" in args:
+            destructive_calls.append(call)
+
+    assert not destructive_calls, f"dry-run invoked destructive commands: {destructive_calls}"
+
+
+@pytest.mark.skipif(not SETUP_CPU_SH.exists(), reason="scripts/setup-cpu.sh not yet created")
+def test_setup_cpu_calls_uv_sync_with_required_extras(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """Real run must invoke ``uv sync --extra tts --extra quality``.
+
+    The CPU path doesn't need ``--extra distribute`` since R2 is optional,
+    but tts + quality are mandatory for `radio demo` to work end-to-end.
+    """
+    for cmd in (
+        "uv",
+        "cmake",
+        "make",
+        "curl",
+        "git",
+        "sha256sum",
+        "shasum",
+        "ffmpeg",
+        "python3",
+    ):
+        shell_runner.stub(cmd, returncode=0)
+
+    # python3 stub needs to fake a 3.11+ version when called for python_version_ok.
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        '# python3 -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    result = shell_runner.run(
+        str(SETUP_CPU_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env(),
+    )
+
+    assert result.returncode == 0, (
+        f"setup-cpu should succeed with all skips:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+
+    # Find the uv sync invocation and verify extras.
+    uv_calls = [c for c in result.calls if c[0].endswith("/uv")]
+    assert any(
+        "sync" in c and "--extra" in c and "tts" in c and "quality" in c for c in uv_calls
+    ), f"setup-cpu must run 'uv sync --extra tts --extra quality'; uv_calls={uv_calls}"
+
+
+@pytest.mark.skipif(not SETUP_CPU_SH.exists(), reason="scripts/setup-cpu.sh not yet created")
+def test_setup_cpu_skip_whisper_build_skips_cmake(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """``--skip-whisper-build`` must not invoke cmake."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "sha256sum", "shasum", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    result = shell_runner.run(
+        str(SETUP_CPU_SH),
+        args=["--skip-whisper-build", "--skip-models", "--skip-self-test"],
+        env=_clean_setup_env(),
+    )
+
+    assert result.returncode == 0
+    invoked = [c[0] for c in result.calls]
+    assert not any(c.endswith("/cmake") for c in invoked), (
+        f"--skip-whisper-build must not invoke cmake; calls={result.calls}"
+    )
+
+
+@pytest.mark.skipif(not SETUP_CPU_SH.exists(), reason="scripts/setup-cpu.sh not yet created")
+def test_setup_cpu_writes_env_suggested(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """Real run leaves a ``.env.suggested`` with KOKORO_PROVIDER=CPUExecutionProvider."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "sha256sum", "shasum", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_CPU_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env(),
+        cwd=workdir,
+    )
+
+    assert result.returncode == 0
+    env_suggested = workdir / ".env.suggested"
+    assert env_suggested.exists(), (
+        f".env.suggested must be written; workdir contents: {list(workdir.iterdir())}"
+    )
+    content = env_suggested.read_text()
+    assert "KOKORO_PROVIDER=CPUExecutionProvider" in content
+
+
+# ---------------------------------------------------------------------------
+# scripts/oss-smoke.sh — universal smoke test
+# ---------------------------------------------------------------------------
+
+OSS_SMOKE_SH = SCRIPTS_DIR / "oss-smoke.sh"
+
+
+@pytest.mark.skipif(not OSS_SMOKE_SH.exists(), reason="scripts/oss-smoke.sh not yet created")
+def test_oss_smoke_quick_returns_zero(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """``--quick`` is a sub-second sanity test — just check radio --help works."""
+    # Stub uv to succeed so `uv run radio --help` returns 0.
+    shell_runner.stub("uv", returncode=0, stdout="Usage: radio ...\n")
+
+    result = shell_runner.run(str(OSS_SMOKE_SH), args=["--quick"])
+
+    assert result.returncode == 0, (
+        f"smoke --quick should succeed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    invoked = [c[0] for c in result.calls]
+    assert any(c.endswith("/uv") for c in invoked), "smoke --quick must invoke uv at minimum"
+
+
+@pytest.mark.skipif(not OSS_SMOKE_SH.exists(), reason="scripts/oss-smoke.sh not yet created")
+def test_oss_smoke_audition_invokes_radio_render(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """``--audition`` must invoke the renderer against the canned sample.
+
+    Run with cwd=REPO_ROOT so the canned sample and voice profile checks
+    resolve. We're verifying the script's *invocation* of uv, not its
+    file-existence checks (those would fail in tmp_path even though the
+    files exist in the repo).
+    """
+    shell_runner.stub("uv", returncode=0)
+    shell_runner.stub("timeout", returncode=0)  # the script wraps uv in `timeout`
+
+    result = shell_runner.run(str(OSS_SMOKE_SH), args=["--audition"], cwd=REPO_ROOT)
+
+    invoked_cmds = [c for c in result.calls if c[0].endswith("/uv") or c[0].endswith("/timeout")]
+    flat = [arg for c in invoked_cmds for arg in c]
+    assert "render" in flat or "demo" in flat, (
+        f"--audition must invoke uv run radio render or demo; calls={result.calls}"
+    )
+
+
+@pytest.mark.skipif(not OSS_SMOKE_SH.exists(), reason="scripts/oss-smoke.sh not yet created")
+def test_oss_smoke_quality_path_not_interpolated_into_python(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """Regression for shell-injection finding from the PR3 review.
+
+    The verdict-extraction step in --full mode parses ``quality.json``
+    via Python. The path comes from ``find`` output and is operator-
+    controlled (episode dir names). It must be passed as ``sys.argv[1]``,
+    NEVER interpolated into a Python source literal — otherwise a
+    directory named like ``foo'); __import__('os').system('id') #`` would
+    execute arbitrary code.
+
+    This test reads the script source and asserts the extraction reads
+    the path from sys.argv (heredoc + positional arg), not from a
+    formatted string literal.
+    """
+    text = OSS_SMOKE_SH.read_text()
+    # Find the verdict-extraction block.
+    assert "quality_json" in text
+    # The extraction must use sys.argv (heredoc + positional), not the
+    # vulnerable pattern open('$quality_json').
+    assert "sys.argv" in text, (
+        "verdict extraction must read the path via sys.argv, not interpolation"
+    )
+    assert "open('$quality_json'" not in text, (
+        "shell injection regression: do not interpolate $quality_json into a Python literal"
+    )
+
+
+@pytest.mark.skipif(not OSS_SMOKE_SH.exists(), reason="scripts/oss-smoke.sh not yet created")
+def test_oss_smoke_unknown_mode_rejected(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """An unrecognized mode must exit nonzero with a usage message."""
+    shell_runner.stub("uv", returncode=0)
+
+    result = shell_runner.run(str(OSS_SMOKE_SH), args=["--bogus-mode"])
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "bogus-mode" in combined or "unknown" in combined.lower() or "usage" in combined.lower()
+
+
+# ---------------------------------------------------------------------------
+# config/radio.example.yaml load round-trip
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.skipif(not EXAMPLE_CONFIG.exists(), reason="config/radio.example.yaml not yet created")
 def test_radio_example_yaml_loads_into_radioconfig(monkeypatch: pytest.MonkeyPatch) -> None:
     """``load_config(config/radio.example.yaml)`` populates a full RadioConfig.
