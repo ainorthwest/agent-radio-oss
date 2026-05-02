@@ -1597,18 +1597,18 @@ def test_radio_example_yaml_loads_into_radioconfig(monkeypatch: pytest.MonkeyPat
 
 
 def _ffmpeg_probe_body(extra_setup: str = "") -> str:
-    """Probe body that constrains PATH so ffmpeg is genuinely absent.
+    """Probe body that exercises the helper as if ffmpeg were missing.
 
-    We can't rely on the host machine's PATH — many dev boxes have ffmpeg
-    in /opt/homebrew/bin or /usr/local/bin. The probe pins PATH to a
-    minimal set: the stub_bin (first, prepended by the runner) plus the
-    POSIX baseline (/usr/bin:/bin) so `env`/`bash`/`rm` still work. Any
-    stubs we register will resolve via stub_bin; ffmpeg is not in the
-    POSIX baseline on Mac so `command -v ffmpeg` honestly fails.
+    Linux CI runners install ffmpeg explicitly for the audio-processing
+    tests, and macOS dev boxes commonly have it via brew, so trying to
+    hide it via PATH gymnastics is fragile. The helper exposes
+    ``RADIO_TEST_PRETEND_FFMPEG_MISSING=1`` as a deliberate test seam
+    that short-circuits the early ``command -v ffmpeg`` success check
+    so the install-path branches can be exercised cleanly.
     """
     return (
-        "# Pin PATH so ffmpeg is genuinely absent but POSIX tools still resolve.\n"
-        'export PATH="${PATH%%:*}:/usr/bin:/bin"\n'
+        "# Force the helper to take its install-path branches as if ffmpeg were absent.\n"
+        "export RADIO_TEST_PRETEND_FFMPEG_MISSING=1\n"
         f"{extra_setup}"
         "if radio::ensure_pkg_ffmpeg; then echo RC=0; else echo RC=$?; fi\n"
     )

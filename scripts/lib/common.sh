@@ -200,7 +200,13 @@ radio::require_cmd() {
 #   still follow this with `radio::require_cmd ffmpeg` to surface the
 #   actionable remedy on failure.
 radio::ensure_pkg_ffmpeg() {
-  if command -v ffmpeg >/dev/null 2>&1; then
+  # Test seam: pretend ffmpeg is absent without touching the host's PATH.
+  # The shell-test harness on Linux CI runners has /usr/bin/ffmpeg installed
+  # (CI deliberately installs it for the audio-processing tests), so the
+  # path-pinning trick we use elsewhere doesn't reliably hide it. Honoring
+  # this env var lets the test exercise the install-path branches cleanly.
+  if [ "${RADIO_TEST_PRETEND_FFMPEG_MISSING:-}" != "1" ] \
+    && command -v ffmpeg >/dev/null 2>&1; then
     return 0
   fi
   local kernel
