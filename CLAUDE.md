@@ -88,23 +88,30 @@ uv run python -m src.quality output/episode.mp3
 
 ### The pipeline
 
-The core dataflow is a five-stage pipeline (`src/pipeline.py` orchestrates):
+The core dataflow runs as numbered stages in `src/pipeline.py`. The five primary stages (curate → render → quality → distribute, with mixing happening inside render/distribute paths) are interleaved with non-blocking checkpoint stages added during the sprint:
 
 ```
-curate ── render ── mix ── quality ── distribute
-   │        │       │        │           │
-curator   renderer mixer  quality    distributor
-   │        │       │        │           │
-script   per-seg   episode quality   R2 + RSS +
- .json    WAVs     .mp3    .json     AzuraCast
+1   Curate          → script.json
+1.5 Script quality  → pre-render gate (LLM-judged)
+2   Render          → per-segment WAVs + manifest.json (segment cache hits short-circuit Kokoro)
+2.5 Anomaly detect  → anomalies.json (non-blocking)
+3   Quality         → quality.json (3 pillars)
+3.5 Publisher       → episode.md / chapters.json / episode.txt / episode.jsonld + per-show llms.txt (non-blocking)
+4   Distribute      → R2 upload + Discourse post + RSS regen
+4b  Stream          → AzuraCast push (non-blocking)
 ```
 
 - **`src/curator.py`** — Fetches forum activity (Discourse) and calls an OpenAI-compatible LLM (default: OpenRouter) to produce a structured multi-voice script JSON.
-- **`src/renderer.py`** — Reads `script.json`, dispatches each segment to its engine, applies DSP and loudness normalization, writes per-segment WAVs + `manifest.json`.
+- **`src/editor.py`** — Pure-function ops on `script.json` (`delete_segment`, `replace_text`, `reorder_segments`, `insert_segment`, `change_voice`). Returns `(new_script, ScriptDiff)`. Drives `radio edit script` for the autonomous correction loop.
+- **`src/renderer.py`** — Reads `script.json`, dispatches each segment to its engine, applies DSP and loudness normalization, writes per-segment WAVs + `manifest.json`. Optionally consults `SegmentCache` to skip already-rendered segments.
+- **`src/segment_cache.py`** — Content-addressed WAV cache keyed by `sha256(text + speaker + register + voice_profile + engine)`. Lets the renderer regenerate one fixed segment without re-rendering the episode. Atomic writes (`.tmp` + rename) so interrupted runs don't poison the cache.
+- **`src/anomaly.py`** — Post-render checks (silence-ratio dropout, WER outlier, duration anomaly). Each anomaly carries an action suggestion (`regenerate` / `replace_text` / `manual_review`) so the agent can act without interpreting raw scores.
 - **`src/mixer.py`** — Assembles segments into a single episode with music beds, stings, ducking. Uses `src/dsp.py`.
-- **`src/quality.py`** — Three-pillar evaluation: librosa spectral (Pillar 1), torchmetrics DNSMOS/SRMR/PESQ/STOI (Pillar 2), WER intelligibility (Pillar 3 — **stubbed**, returns `-1.0` until whisper.cpp lands on Day 3).
+- **`src/quality.py`** — Three-pillar evaluation: librosa spectral (Pillar 1), torchmetrics DNSMOS/SRMR/PESQ/STOI (Pillar 2), WER intelligibility (Pillar 3 via `src/stt.py` → whisper.cpp).
+- **`src/stt.py`** — whisper.cpp wrapper (subprocess). Exposes `transcribe`, `transcribe_with_timing` + SRT export, pure-Python `wer`/`cer`, `round_trip_score`, `transcribe_for_corpus`. Backs Pillar 3 and the round-trip quality gate.
+- **`src/publisher.py`** — Deterministic, byte-stable derivative content from `script.json` + `manifest.json`: `episode.md` (frontmatter + body), `chapters.json` (Podcasting 2.0), `episode.txt` (agent payload), `episode.jsonld` (schema.org). Plus `build_llms_txt()` for per-show indexes.
 - **`src/distributor.py`** — Uploads MP3 to Cloudflare R2 (S3-compatible via boto3), posts to Discourse. R2 is feature-flagged — empty creds means local-only.
-- **`src/podcast.py`** — RSS feed generation.
+- **`src/podcast.py`** — RSS feed generation. Speaks Podcasting 2.0 (`<podcast:locked>`, `<podcast:person>`, `<podcast:transcript>`, `<podcast:chapters>`) alongside iTunes namespace.
 - **`src/stream.py`** — AzuraCast HTTP API client for live streaming. Apache 2.0; stays in OSS.
 
 ### The library
@@ -126,8 +133,8 @@ Adding an engine: write `src/engines/<name>.py` with a `get_<name>()` lazy loade
 
 This is the educational point of the OSS repo — three different cross-hardware abstractions in one codebase:
 
-- **Kokoro (ONNX Runtime):** provider strings via env var. `KOKORO_PROVIDER=ROCMExecutionProvider | CUDAExecutionProvider | CoreMLExecutionProvider | CPUExecutionProvider`. Defaults to CPU; invalid values fall back to CPU with a stderr warning. See `src/engines/kokoro.py`.
-- **whisper.cpp** (Day 3, not yet wired): compile-flag abstraction — `make GGML_HIPBLAS=1 | GGML_VULKAN=1 | GGML_METAL=1`.
+- **Kokoro (ONNX Runtime):** provider strings via env var. `KOKORO_PROVIDER=MIGraphXExecutionProvider | ROCMExecutionProvider | CUDAExecutionProvider | CoreMLExecutionProvider | CPUExecutionProvider`. Defaults to CPU; invalid values fall back to CPU with a stderr warning. See `src/engines/kokoro.py`. MIGraphX is the AMD GPU path — note the v0.1.0 caveat: a downstream MIGraphX runtime null-pointer (AMDMIGraphX#4618) currently blocks GPU rendering on `gfx1201`, so CPU-on-AMD is the recommended setup until upstream lands a fix. See `docs/investigations/kokoro-amd-rocm.md`.
+- **whisper.cpp** (wired Day 3a, drives Pillar 3 via `src/stt.py`): compile-flag abstraction — `cmake -DGGML_HIP=ON` / `-DGGML_VULKAN=ON` / `-DGGML_METAL=ON`. HIP works on the same RX 9070 where Kokoro MIGraphX hangs — same silicon, different abstractions. That contrast is the educational point of the OSS repo.
 - **Stable Audio Open** (Day 4, not yet wired): PyTorch `device = "cuda" | "mps" | "cpu"` (HIP aliases as cuda on ROCm).
 
 Hardware quirks get documented in `docs/hardware/{amd-rocm,apple-silicon,cpu}.md` as they're discovered. The docs **are** the deliverable for the cross-hardware bring-up days.
