@@ -120,13 +120,19 @@ class TestDemoCommand:
     def test_demo_propagates_pipeline_failure_exit_code(
         self, tmp_config_with_creds: RadioConfig
     ) -> None:
-        with patch("src.pipeline.run", return_value=1):
-            result = runner.invoke(
-                app,
-                ["demo"],
-                # don't patch State.config, just verify SystemExit propagates
-                catch_exceptions=True,
-            )
+        """When pipeline.run() returns non-zero, the demo command must
+        propagate that exit code via SystemExit. Patches credential
+        detection explicitly so the test's exit code reflects the
+        pipeline failure path, not an unrelated load_config or
+        sample-missing failure on a clean CI checkout."""
+        with (
+            patch("src.cli.demo_cmd._curator_credentials_present", return_value=True),
+            patch("src.pipeline.run", return_value=1) as mock,
+        ):
+            result = runner.invoke(app, ["demo"], catch_exceptions=True)
+        assert mock.call_count == 1, (
+            "demo never reached pipeline.run — test passed for wrong reason"
+        )
         assert result.exit_code == 1
 
     def test_demo_errors_when_sample_missing_and_no_creds(
@@ -134,16 +140,16 @@ class TestDemoCommand:
     ) -> None:
         """If the sample script file is gone (e.g. someone deleted it
         from a fork), the demo can't recover. Exit cleanly with a
-        message, not a stack trace."""
+        message, not a stack trace. Patches credential detection
+        explicitly to False so the test exercises the sample-missing
+        branch regardless of whether config/radio.yaml exists on the
+        runner."""
         with (
+            patch("src.cli.demo_cmd._curator_credentials_present", return_value=False),
             patch("src.cli.demo_cmd.SAMPLE_SCRIPT_PATH", Path("/nonexistent/script.json")),
             patch("src.pipeline.run") as mock,
         ):
-            result = runner.invoke(
-                app,
-                ["demo"],
-                catch_exceptions=True,
-            )
+            result = runner.invoke(app, ["demo"], catch_exceptions=True)
         # Should fail before pipeline runs
         assert mock.call_count == 0
         assert result.exit_code == 1
