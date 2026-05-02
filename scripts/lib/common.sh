@@ -105,7 +105,16 @@ radio::status_fail() {
 #
 # Reads `uname -s` / `uname -m` and probes for `rocminfo` / `nvidia-smi`
 # on PATH. WSL is detected via /proc/version containing "microsoft".
+#
+# RADIO_PLATFORM_OVERRIDE skips detection — useful on dual-GPU hosts
+# (NVIDIA + AMD installed side-by-side) where the autodetect order
+# (cuda before amd) wouldn't match the operator's intent.
 radio::detect_platform() {
+  if [ -n "${RADIO_PLATFORM_OVERRIDE:-}" ]; then
+    echo "$RADIO_PLATFORM_OVERRIDE"
+    return 0
+  fi
+
   local kernel
   local arch
   kernel="$(uname -s)"
@@ -211,6 +220,11 @@ radio::guard_no_venv() {
 # radio::dry_run_or_exec <cmd> [args...]
 #   In dry-run mode (RADIO_DRY_RUN=1), prints what would be run and
 #   returns 0 without invoking. Otherwise invokes the command verbatim.
+#
+#   CONTRACT: callers MUST use sequential calls, not `&&` chains. A
+#   chain like `dry_run_or_exec foo && next-step` will run `next-step`
+#   for real in dry-run mode (because the wrapper returned 0). Use
+#   sequential statements; the wrapper short-circuits each one.
 radio::dry_run_or_exec() {
   if [ "${RADIO_DRY_RUN:-}" = "1" ]; then
     printf '%s[dry-run]%s would run: %s\n' \

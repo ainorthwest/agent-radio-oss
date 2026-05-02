@@ -47,6 +47,7 @@ Options:
   --dry-run             Print what would happen, do not download
   --force               Re-download even if file present
   --no-network          Refuse to download (idempotent verify only)
+  --allow-unpinned      Accept downloads with no sha256 pin (small.en, medium.en)
   --skip-kokoro         Skip Kokoro models (Whisper only)
   --skip-whisper        Skip Whisper models (Kokoro only)
   -h, --help            Show this help
@@ -58,6 +59,7 @@ WHISPER_MODEL="base.en"
 FORCE=0
 SKIP_KOKORO=0
 SKIP_WHISPER=0
+ALLOW_UNPINNED=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -87,6 +89,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-whisper)
       SKIP_WHISPER=1
+      shift
+      ;;
+    --allow-unpinned)
+      ALLOW_UNPINNED=1
       shift
       ;;
     -h | --help)
@@ -126,9 +132,21 @@ case "$WHISPER_MODEL" in
 esac
 WHISPER_FILE="ggml-${WHISPER_MODEL}.bin"
 
+# Fail fast on unpinned Whisper sizes — even in dry-run mode. The Hugging
+# Face URLs use ``resolve/main`` which can change at any time, so an
+# unpinned download is a supply-chain gap. The operator must explicitly
+# opt in via --allow-unpinned to acknowledge the risk.
+if [ "$SKIP_WHISPER" != "1" ] && [ -z "$WHISPER_SHA" ] && [ "$ALLOW_UNPINNED" != "1" ]; then
+  radio::status_fail "no sha256 pin for $WHISPER_FILE" \
+    --remedy "this Whisper size has not been verified yet; pass --allow-unpinned to override at your own risk, or use --model base.en (sha-pinned)" || exit 1
+fi
+
 # ----- helpers --------------------------------------------------------------
 
 # _sha256 <file> — print just the hash (no filename suffix).
+# Exits the script on failure (no checksum tool available) — bash's
+# `set -e` does NOT trigger on `radio::status_fail` returning nonzero
+# inside an if/elif/else block, so an explicit `exit 1` is required.
 _sha256() {
   local f="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -137,18 +155,20 @@ _sha256() {
     shasum -a 256 "$f" | awk '{print $1}'
   else
     radio::status_fail "neither sha256sum nor shasum found" \
-      --remedy "install coreutils (Linux: 'apt install coreutils', macOS: built in)"
+      --remedy "install coreutils (Linux: 'apt install coreutils', macOS: built in)" || exit 1
   fi
 }
 
 # _verify_sha <file> <expected_sha>
 #   Returns 0 if file's sha matches expected_sha, 1 otherwise.
-#   Empty expected_sha (an unpinned model) returns 0 with a warning.
+#   Empty expected_sha is reachable only via --allow-unpinned (the
+#   up-front policy check at top-level rejects unpinned sizes by default);
+#   in that case we warn and pass.
 _verify_sha() {
   local f="$1"
   local expected="$2"
   if [ -z "$expected" ]; then
-    radio::log_warn "no sha256 pin for $(basename "$f"); skipping integrity check"
+    radio::log_warn "no sha256 pin for $(basename "$f"); skipping integrity check (--allow-unpinned)"
     return 0
   fi
   local actual
@@ -203,8 +223,12 @@ _download() {
     wget -q --show-progress -O "$tmp" "$url"
   else
     rm -f "$tmp"
+    # `set -e` does not fire on a function returning nonzero from inside
+    # an else branch — explicit `exit 1` so we don't fall through into
+    # _verify_sha on a tmp that no longer exists (which would surface a
+    # confusing sha-mismatch error instead of "install curl or wget").
     radio::status_fail "neither curl nor wget found" \
-      --remedy "install curl or wget"
+      --remedy "install curl or wget" || exit 1
   fi
 
   if ! _verify_sha "$tmp" "$expected_sha"; then

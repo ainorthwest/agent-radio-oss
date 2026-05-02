@@ -218,12 +218,7 @@ def _common_sh_probe(body: str) -> str:
     The probe lives in the test's ``tmp_path``; sourcing common.sh from a
     relative path makes the test independent of where the runner CWDs.
     """
-    return (
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        f'source "{COMMON_SH}"\n'
-        f"{body}\n"
-    )
+    return f'#!/usr/bin/env bash\nset -euo pipefail\nsource "{COMMON_SH}"\n{body}\n'
 
 
 @pytest.mark.skipif(not COMMON_SH.exists(), reason="scripts/lib/common.sh not yet created")
@@ -235,7 +230,9 @@ def test_common_sh_sources_cleanly(shell_runner: ShellRunner, tmp_path: Path) ->
 
     result = shell_runner.run(str(probe))
 
-    assert result.returncode == 0, f"sourcing failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    assert result.returncode == 0, (
+        f"sourcing failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
     assert "sourced ok" in result.stdout
 
 
@@ -304,13 +301,35 @@ def test_common_sh_detect_platform(
         shell_runner.stub("nvidia-smi", returncode=0, stdout="NVIDIA-SMI ...\n")
 
     probe = tmp_path / "probe.sh"
-    probe.write_text(_common_sh_probe('platform="$(radio::detect_platform)"\necho "PLATFORM=$platform"'))
+    probe.write_text(
+        _common_sh_probe('platform="$(radio::detect_platform)"\necho "PLATFORM=$platform"')
+    )
     probe.chmod(0o755)
 
     result = shell_runner.run(str(probe))
 
     assert result.returncode == 0, f"detect_platform failed:\nstderr: {result.stderr}"
     assert f"PLATFORM={expected}" in result.stdout
+
+
+@pytest.mark.skipif(not COMMON_SH.exists(), reason="scripts/lib/common.sh not yet created")
+def test_common_sh_platform_override_short_circuits(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """``RADIO_PLATFORM_OVERRIDE`` short-circuits autodetect.
+
+    Operators on dual-GPU hosts (NVIDIA + AMD) need a way to declare
+    intent because the autodetect order is fixed. Any value goes — we
+    don't validate against the canonical token list, callers are
+    expected to know what they're doing.
+    """
+    probe = tmp_path / "probe.sh"
+    probe.write_text(_common_sh_probe('echo "PLATFORM=$(radio::detect_platform)"'))
+    probe.chmod(0o755)
+
+    result = shell_runner.run(str(probe), env={"RADIO_PLATFORM_OVERRIDE": "linux-amd"})
+
+    assert "PLATFORM=linux-amd" in result.stdout
 
 
 @pytest.mark.skipif(not COMMON_SH.exists(), reason="scripts/lib/common.sh not yet created")
@@ -407,9 +426,9 @@ def test_common_sh_dry_run_skips_destructive_actions(
     real_probe.chmod(0o755)
     real_result = shell_runner.run(str(real_probe))
     assert real_result.returncode == 0
-    assert any(
-        c[0].endswith("victim") and c[1:] == ["arg1", "arg2"] for c in real_result.calls
-    ), f"non-dry path must invoke the command; calls={real_result.calls}"
+    assert any(c[0].endswith("victim") and c[1:] == ["arg1", "arg2"] for c in real_result.calls), (
+        f"non-dry path must invoke the command; calls={real_result.calls}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +510,76 @@ def _read_pinned_shas() -> dict[str, str]:
 @pytest.mark.skipif(
     not DOWNLOAD_MODELS_SH.exists(), reason="scripts/download-models.sh not yet created"
 )
+def test_download_models_unpinned_size_fails_without_allow_flag(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """``--model small.en`` without ``--allow-unpinned`` must hard-fail.
+
+    The Hugging Face URLs for whisper.cpp models point at ``resolve/main``,
+    which can change at any time. Until small.en/medium.en have pinned
+    shas, an unverified download is a supply-chain gap — silent acceptance
+    is unsafe.
+    """
+    shell_runner.stub("curl", returncode=0)
+    shell_runner.stub("wget", returncode=0)
+    shell_runner.stub("sha256sum", returncode=0, stdout="aaaaaaaa  fake\n")
+    shell_runner.stub("shasum", returncode=0, stdout="aaaaaaaa  fake\n")
+
+    result = shell_runner.run(
+        str(DOWNLOAD_MODELS_SH),
+        args=[
+            "--dry-run",
+            "--model",
+            "small.en",
+            "--skip-kokoro",
+            "--models-dir",
+            str(tmp_path / "models"),
+        ],
+    )
+
+    assert result.returncode != 0, "unpinned download must hard-fail without --allow-unpinned"
+    combined = result.stdout + result.stderr
+    assert "allow-unpinned" in combined or "no sha256 pin" in combined.lower()
+
+
+@pytest.mark.skipif(
+    not DOWNLOAD_MODELS_SH.exists(), reason="scripts/download-models.sh not yet created"
+)
+def test_download_models_no_network_with_missing_files_fails_clean(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """``--no-network`` with no cached files exits nonzero with an actionable remedy.
+
+    Regression for the code-review finding around the if/elif/else +
+    set -e exemption. The previous flow could fall through into
+    ``_verify_sha`` on a deleted .tmp file, surfacing a misleading
+    sha-mismatch message. With the fix, the failure is clean: a single
+    ✗ line plus a "to fix:" remedy pointing at how to bypass.
+    """
+    result = shell_runner.run(
+        str(DOWNLOAD_MODELS_SH),
+        args=[
+            "--no-network",
+            "--skip-whisper",
+            "--models-dir",
+            str(tmp_path / "empty-models"),
+        ],
+    )
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "RADIO_NO_NETWORK" in combined
+    assert "to fix:" in combined
+    # Critical regression check: the fix must NOT surface a sha mismatch
+    # error here — the failure is "no network", not "sha mismatch".
+    assert "sha256 mismatch" not in combined.lower(), (
+        "fix from code review: must not fall through to sha-verify when network is unavailable"
+    )
+
+
+@pytest.mark.skipif(
+    not DOWNLOAD_MODELS_SH.exists(), reason="scripts/download-models.sh not yet created"
+)
 def test_download_models_idempotent_when_files_present_with_correct_sha(
     shell_runner: ShellRunner, tmp_path: Path
 ) -> None:
@@ -522,11 +611,11 @@ def test_download_models_idempotent_when_files_present_with_correct_sha(
         ' for arg in "$@"; do printf "\\x00%s" "$arg"; done;'
         ' printf "\\n"; }'
         ' >> "$log"\n'
-        '# Locate the file argument (last positional).\n'
+        "# Locate the file argument (last positional).\n"
         'for f in "$@"; do :; done\n'
         'base="$(basename "$f")"\n'
         f"{lookup_entries}\n"
-        '# Unknown filename — print a deadbeef sha to force mismatch.\n'
+        "# Unknown filename — print a deadbeef sha to force mismatch.\n"
         'echo "deadbeefdeadbeef  $f"\n'
     )
     sha_stub_path = tmp_path / "_stubs_bin" / "sha256sum"
