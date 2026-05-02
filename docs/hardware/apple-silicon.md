@@ -4,6 +4,16 @@
 
 This doc captures the Day 2 (2026-04-30) bring-up on a real Mac. Every command was actually run; every number is a measurement, not an estimate.
 
+## One-shot install
+
+```bash
+bash scripts/setup-mac.sh
+```
+
+Installs `ffmpeg` and `cmake` via Homebrew (if missing), runs `uv sync`, builds `whisper.cpp` with `-DGGML_METAL=ON`, downloads models, writes `.env.suggested` with `KOKORO_PROVIDER=CoreMLExecutionProvider`, and runs a quick smoke check. Refuses on Intel Mac (use `setup-cpu.sh` there).
+
+The sections below document what the script does so operators can reproduce it by hand.
+
 ## Verified host
 
 | | |

@@ -4,6 +4,18 @@
 
 This doc captures the Day 2 (2026-04-30) bring-up on a real RDNA4 Radeon — the AMD path is the **wildcard** of the OSS repo and the reason the bifurcation thesis exists. Everything below is what was actually run; numbers are measurements, not estimates.
 
+## One-shot install
+
+```bash
+bash scripts/setup-amd.sh
+```
+
+The script verifies `rocminfo` lists a `gfx1xxx` GPU, runs `uv sync`, performs the `onnxruntime` ↔ `onnxruntime-migraphx` wheel swap (uninstall both, install only the AMD-published wheel), builds `whisper.cpp` with `-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1201` (override with `--gfx-target`), downloads models, and writes `.env.suggested`.
+
+**v0.1.0 default: `KOKORO_PROVIDER=CPUExecutionProvider`.** The MIGraphX runtime null-pointer (AMDMIGraphX#4618) currently blocks GPU rendering on `gfx1201`. The script defaults to CPU on AMD because that's a known-good 8.25s render path on Hinoki Ryzen 7 9700X. Pass `--enable-migraphx` to opt in to the GPU path; you'll inherit the v0.1.0 hang. `whisper.cpp` HIP works on the same RX 9070 where Kokoro/MIGraphX hangs (different abstractions, same silicon — that's the educational point of the OSS repo) so the GPU path engages for transcription regardless of the Kokoro choice.
+
+The sections below document what the script does so operators can reproduce it by hand or troubleshoot a partial install.
+
 ## Verified host
 
 | | |

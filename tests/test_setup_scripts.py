@@ -841,6 +841,298 @@ def test_setup_cpu_writes_env_suggested(shell_runner: ShellRunner, tmp_path: Pat
 
 
 # ---------------------------------------------------------------------------
+# scripts/setup-mac.sh — Apple Silicon path
+# ---------------------------------------------------------------------------
+
+SETUP_MAC_SH = SCRIPTS_DIR / "setup-mac.sh"
+
+
+@pytest.mark.skipif(not SETUP_MAC_SH.exists(), reason="scripts/setup-mac.sh not yet created")
+def test_setup_mac_refuses_on_intel(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """``setup-mac.sh`` is Apple Silicon only — refuses on Intel Mac."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "brew", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    result = shell_runner.run(
+        str(SETUP_MAC_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "mac-intel"}),
+    )
+
+    assert result.returncode != 0, "setup-mac.sh must refuse on Intel Mac"
+    combined = result.stdout + result.stderr
+    assert "Apple Silicon" in combined or "arm64" in combined or "intel" in combined.lower()
+
+
+@pytest.mark.skipif(not SETUP_MAC_SH.exists(), reason="scripts/setup-mac.sh not yet created")
+def test_setup_mac_writes_coreml_provider_in_env(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """The .env.suggested file must set KOKORO_PROVIDER=CoreMLExecutionProvider."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "brew", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_MAC_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "mac-arm"}),
+        cwd=workdir,
+    )
+
+    assert result.returncode == 0, (
+        f"setup-mac should succeed on mac-arm with all skips:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    env_suggested = workdir / ".env.suggested"
+    assert env_suggested.exists()
+    assert "KOKORO_PROVIDER=CoreMLExecutionProvider" in env_suggested.read_text()
+
+
+@pytest.mark.skipif(not SETUP_MAC_SH.exists(), reason="scripts/setup-mac.sh not yet created")
+def test_setup_mac_whisper_build_uses_metal(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """The whisper.cpp cmake invocation must include -DGGML_METAL=ON."""
+    for cmd in ("uv", "cmake", "make", "curl", "brew", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    # git clone needs to *appear* to succeed. Stub git.
+    shell_runner.stub("git", returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_MAC_SH),
+        args=["--skip-models", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "mac-arm"}),
+        cwd=workdir,
+    )
+
+    cmake_calls = [c for c in result.calls if c[0].endswith("/cmake")]
+    metal_call = next(
+        (c for c in cmake_calls if any("GGML_METAL=ON" in arg for arg in c)),
+        None,
+    )
+    assert metal_call is not None, (
+        f"setup-mac must invoke cmake with -DGGML_METAL=ON; cmake_calls={cmake_calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# scripts/setup-amd.sh — AMD ROCm path
+# ---------------------------------------------------------------------------
+
+SETUP_AMD_SH = SCRIPTS_DIR / "setup-amd.sh"
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_refuses_without_rocminfo(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """``setup-amd.sh`` requires ROCm — refuses if rocminfo is absent."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+    # NB: deliberately no `rocminfo` stub.
+
+    result = shell_runner.run(
+        str(SETUP_AMD_SH),
+        args=["--dry-run", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-cpu"}),
+    )
+
+    assert result.returncode != 0, "setup-amd.sh must refuse without rocminfo on PATH"
+    combined = result.stdout + result.stderr
+    assert "rocminfo" in combined.lower() or "rocm" in combined.lower()
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_default_provider_is_cpu(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """Default KOKORO_PROVIDER on AMD is CPUExecutionProvider per Day 2 follow-up.
+
+    The MIGraphX runtime null-pointer (AMDMIGraphX#4618) blocks GPU rendering
+    on gfx1201; until that lands, CPU on AMD is the v0.1.0 recommendation.
+    """
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    # rocminfo needs to claim a gfx1xxx agent.
+    rocminfo_stub = tmp_path / "_stubs_bin" / "rocminfo"
+    rocminfo_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "  Name:                    gfx1201"\n'
+        "exit 0\n"
+    )
+    rocminfo_stub.chmod(0o755)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_AMD_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-amd"}),
+        cwd=workdir,
+    )
+
+    assert result.returncode == 0, (
+        f"setup-amd should succeed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    env_suggested = workdir / ".env.suggested"
+    assert env_suggested.exists()
+    content = env_suggested.read_text()
+    assert "KOKORO_PROVIDER=CPUExecutionProvider" in content, (
+        f".env.suggested must default to CPUExecutionProvider on AMD; content:\n{content}"
+    )
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_enable_migraphx_flag_changes_provider(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """``--enable-migraphx`` opts in to the GPU path (writes MIGraphXExecutionProvider)."""
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    rocminfo_stub = tmp_path / "_stubs_bin" / "rocminfo"
+    rocminfo_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "  Name:                    gfx1201"\n'
+        "exit 0\n"
+    )
+    rocminfo_stub.chmod(0o755)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    result = shell_runner.run(
+        str(SETUP_AMD_SH),
+        args=[
+            "--enable-migraphx",
+            "--skip-models",
+            "--skip-whisper-build",
+            "--skip-self-test",
+        ],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-amd"}),
+        cwd=workdir,
+    )
+
+    assert result.returncode == 0
+    env_suggested = workdir / ".env.suggested"
+    assert "KOKORO_PROVIDER=MIGraphXExecutionProvider" in env_suggested.read_text()
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_uninstalls_onnxruntime_before_install(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """The onnxruntime-migraphx wheel install must follow uninstall of stock onnxruntime.
+
+    Per docs/hardware/amd-rocm.md quirk #2: when both `onnxruntime` and
+    `onnxruntime-migraphx` are installed, the stock one wins on import
+    and the migraphx provider is silently invisible. Setup must
+    uninstall both, then install only migraphx.
+    """
+    for cmd in ("cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+    rocminfo_stub = tmp_path / "_stubs_bin" / "rocminfo"
+    rocminfo_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "  Name:                    gfx1201"\n'
+        "exit 0\n"
+    )
+    rocminfo_stub.chmod(0o755)
+    # uv stub must succeed for both `pip uninstall` and `pip install`.
+    shell_runner.stub("uv", returncode=0)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+
+    result = shell_runner.run(
+        str(SETUP_AMD_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-amd"}),
+    )
+
+    assert result.returncode == 0, f"setup-amd must succeed:\nstderr={result.stderr}"
+    uv_calls = [c for c in result.calls if c[0].endswith("/uv")]
+    # Find the pip uninstall and pip install steps.
+    uninstall_idx = next(
+        (i for i, c in enumerate(uv_calls) if "uninstall" in c and "onnxruntime-migraphx" in c),
+        None,
+    )
+    install_idx = next(
+        (
+            i
+            for i, c in enumerate(uv_calls)
+            if "install" in c and any("onnxruntime_migraphx" in a for a in c)
+        ),
+        None,
+    )
+    assert uninstall_idx is not None, (
+        f"setup-amd must call 'uv pip uninstall onnxruntime-migraphx' to clear the import collision; uv_calls={uv_calls}"
+    )
+    assert install_idx is not None, (
+        f"setup-amd must call 'uv pip install onnxruntime_migraphx-*.whl'; uv_calls={uv_calls}"
+    )
+    assert uninstall_idx < install_idx, (
+        f"uninstall must precede install (uninstall_idx={uninstall_idx}, install_idx={install_idx})"
+    )
+
+
+# ---------------------------------------------------------------------------
 # scripts/oss-smoke.sh — universal smoke test
 # ---------------------------------------------------------------------------
 
