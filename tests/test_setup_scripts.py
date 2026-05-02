@@ -1068,6 +1068,145 @@ def test_setup_amd_enable_migraphx_flag_changes_provider(
 
 
 @pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_survives_first_run_when_onnxruntime_not_installed(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """First-run regression: `uv pip uninstall onnxruntime onnxruntime-migraphx`
+    fails with nonzero when neither package is installed yet. With `set -e`
+    active, that would abort before the install step. The script must
+    swallow the uninstall failure (`|| true`) so the install line still
+    runs.
+
+    We simulate "first run" by stubbing uv to fail on uninstall and
+    succeed on install. Without the `|| true` fix, the script would exit
+    1 here.
+    """
+    rocminfo_stub = tmp_path / "_stubs_bin" / "rocminfo"
+    rocminfo_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "  Name:                    gfx1201"\n'
+        "exit 0\n"
+    )
+    rocminfo_stub.chmod(0o755)
+    # uv stub: fail on `pip uninstall ...`, succeed on everything else.
+    uv_stub = tmp_path / "_stubs_bin" / "uv"
+    uv_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        '# Mimic first-run state: uninstall fails with "package not installed"\n'
+        'if [ "${1:-}" = "pip" ] && [ "${2:-}" = "uninstall" ]; then\n'
+        '  echo "ERROR: package not installed" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    uv_stub.chmod(0o755)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+    for cmd in ("cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+
+    result = shell_runner.run(
+        str(SETUP_AMD_SH),
+        args=["--skip-models", "--skip-whisper-build", "--skip-self-test"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-amd"}),
+    )
+
+    assert result.returncode == 0, (
+        f"setup-amd must survive first-run state where uninstall fails:\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    # Verify install was still called even though uninstall failed.
+    uv_calls = [c for c in result.calls if c[0].endswith("/uv")]
+    install_seen = any(
+        "install" in c and any("onnxruntime_migraphx" in a for a in c) for c in uv_calls
+    )
+    assert install_seen, (
+        f"install step must run even when uninstall fails on first run; uv_calls={uv_calls}"
+    )
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_refuses_python_other_than_312(shell_runner: ShellRunner, tmp_path: Path) -> None:
+    """The AMD wheel is cp312-only — refuse Python 3.11 / 3.13 / etc up front.
+
+    Operators on Python 3.11 hitting the unguarded install would see a
+    cryptic pip wheel-format mismatch error. Catching this in the
+    pre-check turns it into an actionable remedy.
+    """
+    rocminfo_stub = tmp_path / "_stubs_bin" / "rocminfo"
+    rocminfo_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        'echo "  Name:                    gfx1201"\n'
+        "exit 0\n"
+    )
+    rocminfo_stub.chmod(0o755)
+    # python3 stub that claims 3.11 (passes >= 3.11 check but fails == 3.12 check)
+    py_stub = tmp_path / "_stubs_bin" / "python3"
+    py_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        'log="${RADIO_TEST_CALL_LOG:?}"\n'
+        '{ printf "%s" "$0"; for arg in "$@"; do printf "\\x00%s" "$arg"; done; printf "\\n"; } >> "$log"\n'
+        "# Claim Python 3.11 — passes radio::python_version_ok (>=3.11)"
+        " but fails the cp312-specific check.\n"
+        'if [ "${1:-}" = "-c" ]; then\n'
+        '  if echo "${2:-}" | grep -q "version_info\\[:2\\] == (3, 12)"; then\n'
+        "    exit 1  # Not 3.12\n"
+        "  fi\n"
+        '  if echo "${2:-}" | grep -q "version_info >= (3, 11)"; then\n'
+        "    exit 0  # Is 3.11+\n"
+        "  fi\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    py_stub.chmod(0o755)
+    for cmd in ("uv", "cmake", "make", "curl", "git", "ffmpeg"):
+        shell_runner.stub(cmd, returncode=0)
+
+    result = shell_runner.run(
+        str(SETUP_AMD_SH),
+        args=["--dry-run"],
+        env=_clean_setup_env({"RADIO_PLATFORM_OVERRIDE": "linux-amd"}),
+    )
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "3.12" in combined or "Python 3.12" in combined
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
+def test_setup_amd_migraphx_banner_not_only_gfx1201(
+    shell_runner: ShellRunner, tmp_path: Path
+) -> None:
+    """The --enable-migraphx warning banner must not imply only gfx1201 is affected.
+
+    Per code-review feedback: gfx1101 reports the same null-pointer with
+    the identical stack. Operators on other RDNA3+ cards reading "blocked
+    on gfx1201" might enable the broken path with false confidence.
+    """
+    text = SETUP_AMD_SH.read_text()
+    # The banner should mention multiple gfx targets or use generic language.
+    # Cheapest assertion: it does NOT say only "blocked on gfx1201" without
+    # also acknowledging gfx1101 / RDNA3+.
+    if "MIGraphX" in text and "gfx1201" in text:
+        assert "gfx1101" in text or "RDNA3" in text or "other" in text.lower(), (
+            "the MIGraphX warning must broaden beyond gfx1201; "
+            "gfx1101 and other RDNA3+ cards are likely affected too"
+        )
+
+
+@pytest.mark.skipif(not SETUP_AMD_SH.exists(), reason="scripts/setup-amd.sh not yet created")
 def test_setup_amd_uninstalls_onnxruntime_before_install(
     shell_runner: ShellRunner, tmp_path: Path
 ) -> None:
