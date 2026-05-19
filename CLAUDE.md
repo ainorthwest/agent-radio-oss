@@ -23,6 +23,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **The OSS demo is the autonomous loop, not the CLI.** A station without an agent is just a CLI run by hand. The v0.1.0 demo target is: a stranger on AMD hardware runs one setup script and gets a real autonomous radio station — gather → edit → script → render → quality-check → broadcast — with optional human-in-the-loop checkpoints, auto by default.
 
+## Cross-Cutting Standards
+
+Operational standards for Lightcone Studios work (deployment, CI/CD, git strategy, SWE discipline, security tiers, agent protocols) live in **`~/WORK/LIGHTCONE_STUDIOS_LLC/lightcone-ops/`** — the canonical source of truth.
+
+Start at `lightcone-ops/specs/INDEX.md` for the categorized roadmap. Key references:
+
+- **`specs/engineering-discipline.md`** — 12-discipline SWE canon (auto-loaded into every Claude Code session via `~/.claude/rules/`)
+- **`specs/collaboration-contract.md`** — Aaron ↔ Claude partnership baseline (auto-loaded)
+- **`specs/swe-tdd-tiers.md`** + **`specs/agent-security-tiers.md`** — tier semantics (this repo declares DEFAULT / NORMAL above)
+- **`specs/ainw-crm-integration.md`** + **`specs/agent-participation-protocol.md`** — AINW-specific patterns
+- **`decisions/INDEX.md`** — the ADR registry
+
+If you're drafting a new convention for this repo, check `lightcone-ops/specs/` first to avoid redrawing a line that's already canon.
+
 ## Guiding excellences
 
 The OSS station should be excellent at eight things. They are the bar for any v0.1.x feature decision — when in doubt about scope, ask which of these the work moves forward.
